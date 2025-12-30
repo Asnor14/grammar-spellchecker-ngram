@@ -14,7 +14,7 @@ except ImportError:
     nltk = None
 
 class POSNGramModel:
-    # Stricter threshold for detecting unusual patterns
+    # Stricter threshold (-5.0) catches unusual structures universally
     STRUCTURE_THRESHOLD = -5.0
     
     INVALID_PATTERNS = {
@@ -46,10 +46,8 @@ class POSNGramModel:
                 except LookupError: nltk.download(n, quiet=True)
 
     def _train_on_brown_corpus(self) -> bool:
-        # Prevent hang by disabling online download/heavy training if it fails
         if not nltk: return False
         try:
-             # Fast check if brown is available roughly
             formatted = [" ".join(sent) for sent in brown.sents(categories=['news', 'editorial', 'reviews'])[:15000]]
             self.train(formatted)
             return True

@@ -11,6 +11,7 @@ except ImportError:
     nltk = None
 
 class SemanticChecker:
+    # Universal Compatibility Matrix
     VERB_OBJECT_COMPATIBILITY = {
         'drink': {'compatible': {'water', 'coffee', 'tea', 'juice', 'milk', 'liquid', 'soda', 'wine', 'beer'}, 'incompatible': {'table', 'chair', 'book', 'phone', 'car', 'computer', 'tree', 'house'}},
         'eat': {'compatible': {'food', 'meal', 'lunch', 'dinner', 'apple', 'bread', 'pizza', 'meat', 'rice'}, 'incompatible': {'table', 'chair', 'car', 'computer', 'house', 'metal', 'glass', 'sky'}},
@@ -42,7 +43,7 @@ class SemanticChecker:
             verb = word.lower()
             is_verb = tag.startswith('VB')
             
-            # Heuristic: treat word as verb if in priority list (handles "drive" tagged as NN after "to")
+            # Universal Fallback: If it's a known verb, check it regardless of tag
             if not is_verb and verb in priority_verbs:
                 is_verb = True
             
