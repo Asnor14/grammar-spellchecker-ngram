@@ -1,4 +1,3 @@
-
 """
 Grammar API endpoint.
 Handles text analysis requests.
@@ -67,125 +66,73 @@ class AnalysisResult(BaseModel):
 
 
 def apply_corrections(text: str, errors: List[Dict]) -> str:
-    """
-    Apply error corrections to text.
-    
-    Args:
-        text: Original text
-        errors: List of error dictionaries
-        
-    Returns:
-        Corrected text
-    """
-    if not errors:
-        return text
-    
-    # Sort errors by position (reverse order for safe replacement)
+    if not errors: return text
     sorted_errors = sorted(errors, key=lambda e: e['position']['start'], reverse=True)
-    
-    # Track which positions have been modified to avoid overlapping edits
     modified_ranges = []
-    
     result = text
     for error in sorted_errors:
         start = error['position']['start']
         end = error['position']['end']
         suggestion = error['suggestion']
-        
-        # Skip if this range overlaps with an already modified range
         overlaps = False
         for mod_start, mod_end in modified_ranges:
             if not (end <= mod_start or start >= mod_end):
                 overlaps = True
                 break
-        
-        if overlaps:
-            continue
-        
-        # Apply the correction
+        if overlaps: continue
         result = result[:start] + suggestion + result[end:]
         modified_ranges.append((start, end))
-    
     return result
 
 
 def limit_corrections(errors: List[Dict], word_count: int) -> List[Dict]:
     """
-    Limit corrections to max 50% of words per sentence.
-    Punctuation errors are always included.
-    
-    Args:
-        errors: List of errors
-        word_count: Total word count
-        
-    Returns:
-        Limited list of errors
+    Limit corrections.
+    For short sentences (< 5 words), allow ALL corrections.
+    For longer sentences, limit to 50% to prevent total rewrite hallucinations.
     """
     if word_count == 0:
         return errors
     
-    # Separate punctuation errors (always keep them)
+    # Always keep punctuation errors
     punct_errors = [e for e in errors if e['type'] == 'punctuation']
     other_errors = [e for e in errors if e['type'] != 'punctuation']
     
-    # Limit non-punctuation errors to 50% of words
+    # RELAXED LIMIT: If sentence is short, allow everything.
+    if word_count < 5:
+        return other_errors + punct_errors
+        
+    # Strict limit for longer text
     max_corrections = max(1, int(word_count * 0.5))
     
-    # Prioritize by error type: spelling > grammar
-    type_priority = {'spelling': 0, 'grammar': 1}
-    sorted_errors = sorted(other_errors, key=lambda e: type_priority.get(e['type'], 2))
+    # Priority: Spelling > Grammar > Style
+    type_priority = {'spelling': 0, 'grammar': 1, 'semantic': 2, 'structure': 3}
+    sorted_errors = sorted(other_errors, key=lambda e: type_priority.get(e['type'], 4))
     
     limited_other = sorted_errors[:max_corrections]
     
-    # Always include punctuation errors
     return limited_other + punct_errors
 
 
 @router.post("/check-text", response_model=AnalysisResult)
 async def check_text(request: CheckTextRequest):
-    """
-    Analyze text for grammar, spelling, and punctuation errors.
-    
-    Args:
-        request: CheckTextRequest with text and ngram mode
-        
-    Returns:
-        AnalysisResult with errors and corrections
-    """
+    """Analyze text for grammar, spelling, and punctuation errors."""
     start_time = time.time()
-    
     text = request.text.strip()
-    use_trigram = request.ngram == "trigram"
+    if not text: raise HTTPException(status_code=400, detail="Text cannot be empty")
     
-    if not text:
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
-    
-    # Get checkers
-    # NOTE: Transformer disabled - using N-gram model as per project rubrics
-    # transformer_checker = get_transformer_checker()
-    # use_transformer = transformer_checker.pipe is not None
-    use_transformer = False  # Force N-gram mode for academic requirements
+    use_transformer = False 
     
     spell_checker = get_spell_checker()
     punctuation_checker = get_punctuation_checker()
     grammar_rules_checker = get_grammar_rules_checker()
     
-    rule_based_errors = []
+    # 1. Run Global Rule Checker
+    rule_based_errors = grammar_rules_checker.check_text(text)
     
-    # Run rule-based checker only if NOT using transformer (or maybe for supplementary?)
-    # Actually, Transformer might miss some mechanical things like introductory commas if untested.
-    # But usually T5 is good.
-    # Let's run Punctuation Checker ALWAYS, because it's deterministic.
-    # But GrammarRulesChecker is legacy.
-    
-    if not use_transformer:
-        # First, run rule-based grammar check on full text
-        rule_based_errors = grammar_rules_checker.check_text(text)
-    
-    # Split into sentences
     sentences_with_pos = split_sentences_with_positions(text)
     
-    # Assign sentence indices to rule-based errors
+    # Map global errors to sentences
     for error in rule_based_errors:
         error_start = error['position']['start']
         for sent_idx, (sentence, sent_start, sent_end) in enumerate(sentences_with_pos):
@@ -194,198 +141,114 @@ async def check_text(request: CheckTextRequest):
                 break
         else:
             error['sentenceIndex'] = 0
-    
+            
     all_errors = []
     sentence_analyses = []
     
     for sent_idx, (sentence, sent_start, sent_end) in enumerate(sentences_with_pos):
         sentence_errors = []
         
-        if use_transformer:
-            # --- TRANSFORMER MODE ---
-            t5_errors = transformer_checker.check_text(sentence)
-            for error in t5_errors:
-                # Adjust positions relative to global text
-                error['position']['start'] += sent_start
-                error['position']['end'] += sent_start
-                error['sentenceIndex'] = sent_idx
+        # Add Rule Errors
+        for error in rule_based_errors:
+            if error.get('sentenceIndex') == sent_idx:
+                sentence_errors.append(error.copy())
+        
+        # Check Spelling (Avoid overlapping with Grammar errors)
+        spell_errors = spell_checker.check_text(sentence)
+        for error in spell_errors:
+            error['position']['start'] += sent_start
+            error['position']['end'] += sent_start
+            error['sentenceIndex'] = sent_idx
+            
+            overlaps = False
+            for existing in sentence_errors:
+                if not (error['position']['end'] <= existing['position']['start'] or error['position']['start'] >= existing['position']['end']):
+                    overlaps = True
+                    break
+            if not overlaps:
                 sentence_errors.append(error)
                 
-            # Also run punctuation checker for specific mechanical rules (like double spaces)
-            # that T5 might skip or handle implicitly. 
-            # We add them only if they don't overlap.
-            punct_errors = punctuation_checker.check_text(sentence)
-            for error in punct_errors:
-                error['position']['start'] += sent_start
-                error['position']['end'] += sent_start
-                error['sentenceIndex'] = sent_idx
-                
-                # Check overlap
-                is_overlap = False
-                for existing in sentence_errors:
-                    if not (error['position']['end'] <= existing['position']['start'] or
-                            error['position']['start'] >= existing['position']['end']):
-                        is_overlap = True
-                        break
-                if not is_overlap:
-                    sentence_errors.append(error)
+        # Check Punctuation
+        punct_errors = punctuation_checker.check_text(sentence)
+        for error in punct_errors:
+            error['position']['start'] += sent_start
+            error['position']['end'] += sent_start
+            error['sentenceIndex'] = sent_idx
+            overlaps = False
+            for existing in sentence_errors:
+                if not (error['position']['end'] <= existing['position']['start'] or error['position']['start'] >= existing['position']['end']):
+                    overlaps = True
+                    break
+            if not overlaps:
+                sentence_errors.append(error)
 
-        else:
-            # --- LEGACY MODE ---
-            
-            # Get rule-based errors for this sentence
-            for error in rule_based_errors:
-                if error.get('sentenceIndex') == sent_idx:
-                    sentence_errors.append(error.copy())
-            
-            # Check spelling - skip words already flagged by grammar
-            # Use range overlap check, not just exact position match
-            spell_errors = spell_checker.check_text(sentence)
-            for error in spell_errors:
+        # Check Semantic
+        try:
+            semantic_checker = get_semantic_checker()
+            sem_errors = semantic_checker.check_text(sentence) # Note: check_text, not check_sentence
+            for error in sem_errors:
                 error['position']['start'] += sent_start
                 error['position']['end'] += sent_start
                 error['sentenceIndex'] = sent_idx
-                
-                # Check if this position overlaps with any existing grammar error
-                spell_start = error['position']['start']
-                spell_end = error['position']['end']
-                
-                overlaps_grammar = False
-                for existing in sentence_errors:
-                    exist_start = existing['position']['start']
-                    exist_end = existing['position']['end']
-                    # Check for any overlap
-                    if not (spell_end <= exist_start or spell_start >= exist_end):
-                        overlaps_grammar = True
-                        break
-                
-                if not overlaps_grammar:
-                    sentence_errors.append(error)
-            
-            # Check punctuation - also use overlap detection
-            punct_errors = punctuation_checker.check_text(sentence)
-            for error in punct_errors:
-                error['position']['start'] += sent_start
-                error['position']['end'] += sent_start
-                error['sentenceIndex'] = sent_idx
-                
-                # Check overlap with existing errors
-                punct_start = error['position']['start']
-                punct_end = error['position']['end']
-                
                 overlaps = False
                 for existing in sentence_errors:
-                    exist_start = existing['position']['start']
-                    exist_end = existing['position']['end']
-                    if not (punct_end <= exist_start or punct_start >= exist_end):
+                    if not (error['position']['end'] <= existing['position']['start'] or error['position']['start'] >= existing['position']['end']):
                         overlaps = True
                         break
-                
                 if not overlaps:
                     sentence_errors.append(error)
-            
-            # Check semantic errors (verb-object compatibility)
-            try:
-                semantic_checker = get_semantic_checker()
-                semantic_errors = semantic_checker.check_sentence(sentence)
-                for error in semantic_errors:
-                    error['position']['start'] += sent_start
-                    error['position']['end'] += sent_start
-                    error['sentenceIndex'] = sent_idx
-                    
-                    # Check overlap
-                    sem_start = error['position']['start']
-                    sem_end = error['position']['end']
-                    overlaps = False
-                    for existing in sentence_errors:
-                        exist_start = existing['position']['start']
-                        exist_end = existing['position']['end']
-                        if not (sem_end <= exist_start or sem_start >= exist_end):
-                            overlaps = True
-                            break
-                    if not overlaps:
-                        sentence_errors.append(error)
-            except Exception:
-                pass  # Skip semantic check on error
-            
-            # Check POS structure (unusual grammar patterns)
-            try:
-                pos_model = get_pos_ngram_model()
-                structure_errors = pos_model.check_sentence(sentence)
-                for error in structure_errors:
-                    error['position']['start'] += sent_start
-                    error['position']['end'] += sent_start
-                    error['sentenceIndex'] = sent_idx
-                    
-                    # Only add if no other errors at this position
-                    pos_start = error['position']['start']
-                    pos_end = error['position']['end']
-                    overlaps = False
-                    for existing in sentence_errors:
-                        exist_start = existing['position']['start']
-                        exist_end = existing['position']['end']
-                        if not (pos_end <= exist_start or pos_start >= exist_end):
-                            overlaps = True
-                            break
-                    if not overlaps:
-                        sentence_errors.append(error)
-            except Exception:
-                pass  # Skip POS check on error
+        except Exception: pass
+
+        # Check Structure (POS)
+        try:
+            pos_model = get_pos_ngram_model()
+            struct_errors = pos_model.check_sentence(sentence)
+            for error in struct_errors:
+                error['position']['start'] += sent_start
+                error['position']['end'] += sent_start
+                error['sentenceIndex'] = sent_idx
+                overlaps = False
+                for existing in sentence_errors:
+                    if not (error['position']['end'] <= existing['position']['start'] or error['position']['start'] >= existing['position']['end']):
+                        overlaps = True
+                        break
+                if not overlaps:
+                    sentence_errors.append(error)
+        except Exception: pass
         
-        # Remove duplicate errors (same position)
-        seen_positions = set()
+        # Deduplicate
+        seen_pos = set()
         unique_errors = []
         for error in sentence_errors:
-            pos_key = (error['position']['start'], error['position']['end'])
-            if pos_key not in seen_positions:
-                seen_positions.add(pos_key)
+            key = (error['position']['start'], error['position']['end'], error['suggestion'])
+            if key not in seen_pos:
+                seen_pos.add(key)
                 unique_errors.append(error)
         
-        # Limit corrections per sentence (keep limiting to avoid overwhelming)
+        # Limit corrections
         word_count = len(tokenize(sentence))
         limited_errors = limit_corrections(unique_errors, word_count)
         
-        # Calculate sentence fluency (Legacy metric, helpful for debugging)
-        fluency = 100.0
-        try:
-             words = tokenize(sentence)
-             model = get_model() # N-Gram model still used for scoring?
-             # N-Gram model might be untrained if we focused on T5.
-             if model._trained:
-                 perplexity = model.perplexity(words, use_trigram) if words else 100
-                 fluency = calculate_sentence_fluency(sentence, perplexity, len(limited_errors))
-        except:
-             pass
-        
-        # Apply corrections to get corrected sentence
-        corrected_sentence = apply_corrections(sentence, limited_errors)
+        corrected_sent = apply_corrections(sentence, limited_errors)
         
         sentence_analyses.append(SentenceAnalysis(
             index=sent_idx,
             original=sentence,
-            corrected=corrected_sentence,
+            corrected=corrected_sent,
             errors=[GrammarError(**e) for e in limited_errors],
-            fluencyScore=fluency
+            fluencyScore=100.0
         ))
         
-        # Collect all errors (no duplicates)
         all_errors.extend(limited_errors)
     
-    # Calculate corrected text from all unique errors
     corrected_text = apply_corrections(text, all_errors)
-    
-    # Calculate confidence score
-    fluency_scores = [s.fluencyScore for s in sentence_analyses]
-    confidence = calculate_confidence_score(text, all_errors, fluency_scores)
-    
-    processing_time = int((time.time() - start_time) * 1000)
     
     return AnalysisResult(
         originalText=text,
         correctedText=corrected_text,
         errors=[GrammarError(**e) for e in all_errors],
-        confidenceScore=confidence,
+        confidenceScore=0.9, # Simplified
         sentences=sentence_analyses,
         ngramMode=request.ngram,
-        processingTimeMs=processing_time
+        processingTimeMs=int((time.time() - start_time) * 1000)
     )
