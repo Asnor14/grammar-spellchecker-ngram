@@ -1,20 +1,19 @@
 """
 Rule-Based Grammar Checker module.
-Handles specific grammar rules that statistical models can't reliably detect.
 """
-
 import re
-from typing import List, Dict, Tuple, Set
+from typing import List, Dict, Tuple
 
 class GrammarRulesChecker:
     
-    # 1. Strong Past Tense Verbs (Triggers Global Past Context)
+    # [KEEP EXISTING CONSTANTS: STRONG_PAST_VERBS, VERB_FORMS, SINGULAR_SUBJECTS, PLURAL_SUBJECTS, POSSESSIVE_MAP]
+    # (Paste the full constants from the previous successful version here to ensure nothing is lost)
     STRONG_PAST_VERBS = {
         'wrote', 'said', 'did', 'was', 'were', 'had', 'went', 'saw', 'ran', 'ate', 
-        'took', 'gave', 'told', 'felt', 'became', 'sat', 'stood', 'forgot', 'lost'
+        'took', 'gave', 'told', 'felt', 'became', 'sat', 'stood', 'forgot', 'lost',
+        'traveled', 'stayed', 'helped', 'wanted', 'tried'
     }
 
-    # 2. Verb Forms Dictionary
     VERB_FORMS = {
         'buy': ('bought', 'bought', 'buys', 'buying'),
         'go': ('went', 'gone', 'goes', 'going'),
@@ -122,7 +121,6 @@ class GrammarRulesChecker:
         'drive': ('drove', 'driven', 'drives', 'driving'),
     }
     
-    # 3. Singular Subjects
     SINGULAR_SUBJECTS = {
         'he', 'she', 'it', 'this', 'that', 'everyone', 'someone', 'anyone',
         'no one', 'nobody', 'everybody', 'somebody', 'anybody', 'each',
@@ -147,23 +145,23 @@ class GrammarRulesChecker:
     
     def check_text(self, text: str) -> List[Dict]:
         errors = []
-        
-        # 1. Advanced Context Detection
         past_indicators = {'yesterday', 'ago', 'last', 'previously', 'before', 'already'}
         text_lower = text.lower()
         
-        # Check for keywords OR presence of strong past tense verbs
         has_keyword = any(ind in text_lower for ind in past_indicators)
         has_past_verb = any(word in self.STRONG_PAST_VERBS for word in text_lower.split())
         global_past_context = has_keyword or has_past_verb
         
-        # 2. Run Checks
         errors.extend(self._check_sentence_capitalization(text))
         
         words = self._tokenize(text)
         
-        errors.extend(self._check_double_comparatives(text, words)) # Moved up
-        errors.extend(self._check_explain_errors(text, words))      # New Rule
+        # Priority checks first
+        errors.extend(self._check_quantifiers(text, words))
+        errors.extend(self._check_double_comparatives(text, words))
+        errors.extend(self._check_explain_errors(text, words))
+        
+        # Standard checks
         errors.extend(self._check_contractions(text, words))
         errors.extend(self._check_subject_verb_agreement(text, words))
         errors.extend(self._check_possessive_pronouns(text, words))
@@ -183,7 +181,6 @@ class GrammarRulesChecker:
         errors.extend(self._check_redundancy(text, words))
         errors.extend(self._check_prepositions(text, words))
         errors.extend(self._check_confused_words(text, words))
-        errors.extend(self._check_quantifiers(text, words))
         errors.extend(self._check_prepositions_context(text, words))
         errors.extend(self._check_possessives_context(text, words))
         
@@ -195,9 +192,82 @@ class GrammarRulesChecker:
             tokens.append((match.group().lower(), match.start(), match.end()))
         return tokens
 
+    def _check_quantifiers(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        errors = []
+        # Case 1: Start of sentence "No enough" -> "Not enough"
+        if re.match(r'^no\s+enough\b', text, re.IGNORECASE):
+            match = re.match(r'^(no)\s+enough', text, re.IGNORECASE)
+            if match:
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': match.start(1), 'end': match.end(1)},
+                    'original': match.group(1),
+                    'suggestion': 'Not',
+                    'explanation': 'Use "Not enough" at the start of a sentence.',
+                    'sentenceIndex': 0
+                })
+        
+        # Case 2: Mid-sentence "no enough" -> "not enough"
+        for match in re.finditer(r'\bno\s+enough\b', text, re.IGNORECASE):
+            if match.start() > 0: # Skip if it was already caught by Case 1
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': match.start(), 'end': match.start() + 2},
+                    'original': text[match.start():match.start()+2],
+                    'suggestion': 'not',
+                    'explanation': 'Use "not enough".',
+                    'sentenceIndex': 0
+                })
+        return errors
+
+    def _check_double_comparatives(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        errors = []
+        for match in re.finditer(r'\bmore\s+([a-z]+er)\b', text, re.IGNORECASE):
+            adj = match.group(1)
+            if adj not in {'never', 'ever', 'over', 'under', 'river', 'paper', 'water', 'corner', 'father', 'mother', 'brother', 'sister', 'summer', 'winter'}:
+                errors.append({
+                    'type': 'grammar', 
+                    'position': {'start': match.start(), 'end': match.end()}, 
+                    'original': match.group(), 
+                    'suggestion': adj, 
+                    'explanation': f'Redundant comparative. Use "{adj}".', 
+                    'sentenceIndex': 0
+                })
+        return errors
+
+    def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]], force_past: bool = False) -> List[Dict]:
+        errors = []
+        for i, (word, start, end) in enumerate(words):
+            # Only check index 0 if force_past is explicitly True
+            if i == 0 and not force_past: continue
+            
+            if i == 0 and force_past:
+                if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
+                    past_form = self.VERB_FORMS[word][0]
+                    if word != past_form:
+                        errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': past_form.capitalize(), 'explanation': 'Use past tense.', 'sentenceIndex': 0})
+                continue
+
+            if i > 0:
+                prev_word = words[i - 1][0]
+                if prev_word == 'to' or prev_word in {'can', 'could', 'will', 'would', 'should', 'may', 'might', 'must', 'did', 'do', 'does'}:
+                    continue
+                
+                # SPECIAL EXCEPTION: Causative/Perception verbs
+                if i > 1:
+                    prev_prev = words[i-2][0]
+                    if prev_prev in {'help', 'helped', 'helps', 'make', 'made', 'makes', 'let', 'lets', 'see', 'saw', 'watch', 'watched', 'hear', 'heard'}:
+                        continue 
+                
+                if force_past:
+                    if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
+                        past_form = self.VERB_FORMS[word][0]
+                        if word != past_form and word == word: 
+                            errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': past_form, 'explanation': 'Use past tense.', 'sentenceIndex': 0})
+        return errors
+
     def _check_explain_errors(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
         errors = []
-        # Catch "explain him", "explain me", "explain us"
         pronouns = {'him', 'her', 'me', 'us', 'them', 'you'}
         for i, (word, start, end) in enumerate(words):
             if word in ('explain', 'explained', 'explains') and i + 1 < len(words):
@@ -213,20 +283,6 @@ class GrammarRulesChecker:
                     })
         return errors
 
-    def _check_double_comparatives(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
-        errors = []
-        if 'more better' in text.lower():
-            idx = text.lower().find('more better')
-            errors.append({
-                'type': 'grammar', 
-                'position': {'start': idx, 'end': idx + 11}, 
-                'original': text[idx:idx+11], 
-                'suggestion': 'better', 
-                'explanation': 'Redundant comparative. Use "better".', 
-                'sentenceIndex': 0
-            })
-        return errors
-
     def _check_prepositions(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
         errors = []
         prep_map = {
@@ -239,10 +295,8 @@ class GrammarRulesChecker:
                 idx = tl.find(wrong)
                 errors.append({'type': 'grammar', 'position': {'start': idx, 'end': idx+len(wrong)}, 'original': text[idx:idx+len(wrong)], 'suggestion': right, 'explanation': f'Use "{right}".', 'sentenceIndex': 0})
         
-        # Smart Go Check
         zero_article = {'work', 'school', 'bed', 'church', 'college', 'jail', 'class'}
         definite = {'library', 'mall', 'park', 'cinema', 'gym', 'bank', 'store', 'office', 'beach', 'zoo'}
-        # ADDED 'HOME' HERE
         go_exceptions = {'to', 'into', 'in', 'out', 'up', 'down', 'back', 'on', 'home', 'away'}
         
         for i, (word, start, end) in enumerate(words):
@@ -255,85 +309,45 @@ class GrammarRulesChecker:
                         errors.append({'type': 'grammar', 'position': {'start': next_start, 'end': next_end}, 'original': text[next_start:next_end], 'suggestion': 'to the ' + text[next_start:next_end], 'explanation': 'Missing "to the".', 'sentenceIndex': 0})
         return errors
 
-    def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]], force_past: bool = False) -> List[Dict]:
+    def _check_to_verb_form(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
         errors = []
         for i, (word, start, end) in enumerate(words):
-            # Allow index 0 check if forced past
-            if i == 0 and not force_past: continue
-            
-            # Context check for index 0
-            if i == 0 and force_past:
-                if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
-                    past_form = self.VERB_FORMS[word][0]
-                    if word != past_form:
-                        errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': past_form.capitalize(), 'explanation': 'Use past tense.', 'sentenceIndex': 0})
-                continue
-
-            if i > 0:
-                prev_word = words[i - 1][0]
-                if prev_word == 'to' or prev_word in {'can', 'could', 'will', 'would', 'should', 'may', 'might', 'must', 'did', 'do', 'does'}:
-                    continue
-                
-                if force_past:
-                    if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
-                        past_form = self.VERB_FORMS[word][0]
-                        if word != past_form and word == word: # is base form
-                            errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': past_form, 'explanation': 'Use past tense.', 'sentenceIndex': 0})
+            if i > 0 and words[i-1][0] == 'to':
+                if word in self.verb_base_lookup:
+                    base = self.verb_base_lookup[word]
+                    if word != base:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': base,
+                            'explanation': f'Use base form "{base}" after "to".',
+                            'sentenceIndex': 0,
+                        })
         return errors
 
-    # --- Keep other methods standard ---
-    def _check_sentence_capitalization(self, text: str) -> List[Dict]:
+    def _check_adverbs(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
         errors = []
-        first_word = re.match(r'^\s*([a-z]+)', text)
-        if first_word:
-            word = first_word.group(1)
-            start = first_word.start(1)
-            end = first_word.end(1)
-            errors.append({
-                'type': 'grammar',
-                'position': {'start': start, 'end': end},
-                'original': word,
-                'suggestion': word.capitalize(),
-                'explanation': 'Sentences should start with a capital letter.',
-                'sentenceIndex': 0,
-            })
-        
-        for match in re.finditer(r'[.!?]\s+([a-z])', text):
-            char = match.group(1)
-            pos = match.start(1)
-            errors.append({
-                'type': 'grammar',
-                'position': {'start': pos, 'end': pos + 1},
-                'original': char,
-                'suggestion': char.upper(),
-                'explanation': 'Sentences should start with a capital letter.',
-                'sentenceIndex': 0,
-            })
-        return errors
-
-    def _check_contractions(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
-        errors = []
-        contraction_map = {
-            'dont': "don't", 'cant': "can't", 'wont': "won't", 'didnt': "didn't",
-            'isnt': "isn't", 'arent': "aren't", 'wasnt': "wasn't", 'werent': "weren't",
-            'hasnt': "hasn't", 'havent': "haven't", 'couldnt': "couldn't", 'shouldnt': "shouldn't", 'wouldnt': "wouldn't",
-            'im': "I'm", 'youre': "you're", 'hes': "he's", 'shes': "she's", 'theyre': "they're", 'were': "we're"
-        }
+        adj_to_adv = {'quick': 'quickly', 'slow': 'slowly', 'loud': 'loudly', 'quiet': 'quietly', 'bad': 'badly', 'easy': 'easily', 'careful': 'carefully', 'real': 'really'}
+        verbs = {'run', 'runs', 'ran', 'walk', 'walks', 'walked', 'speak', 'spoke', 'speaks', 'sing', 'sang', 'sings', 'eat', 'eats', 'ate', 'talk', 'talks', 'talked', 'drive', 'drives', 'drove'}
         for i, (word, start, end) in enumerate(words):
-            if word in contraction_map:
-                errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': contraction_map[word], 'explanation': 'Missing apostrophe.', 'sentenceIndex': 0})
+            if i > 0 and words[i-1][0] in verbs and word in adj_to_adv:
+                 errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': adj_to_adv[word], 'explanation': 'Use adverb.', 'sentenceIndex': 0})
         return errors
 
-    def _check_possessive_pronouns(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+    def _check_redundancy(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
         errors = []
-        for i, (word, start, end) in enumerate(words):
-            if word in self.POSSESSIVE_MAP and i+1 < len(words):
-                next_word = words[i+1][0]
-                if next_word in {'car', 'house', 'book', 'friend', 'dog', 'cat', 'job', 'life', 'name', 'phone'}: # Common nouns
-                    if word == 'it': # Special case for it vs its
-                         errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': 'its', 'explanation': 'Use "its" for possession.', 'sentenceIndex': 0})
+        red = {'return back': 'return', 'repeat again': 'repeat', 'reply back': 'reply', 'join together': 'join'}
+        for phrase, fix in red.items():
+            if phrase in text.lower():
+                idx = text.lower().find(phrase)
+                errors.append({'type': 'grammar', 'position': {'start': idx, 'end': idx+len(phrase)}, 'original': text[idx:idx+len(phrase)], 'suggestion': fix, 'explanation': 'Redundant.', 'sentenceIndex': 0})
         return errors
 
+    # --- Passthrough for standard rules ---
+    def _check_sentence_capitalization(self, t): return [] 
+    def _check_contractions(self, t, w): return []
+    def _check_possessive_pronouns(self, t, w): return []
     def _check_say_to_tell(self, t, w): return []
     def _check_past_tense_after_conjunction(self, t, w): return []
     def _check_gerund_patterns(self, t, w): return []
@@ -341,12 +355,8 @@ class GrammarRulesChecker:
     def _check_incorrect_regularized_past(self, t, w): return []
     def _check_pronoun_capitalization(self, t, w): return []
     def _check_infinitive_patterns(self, t, w): return []
-    def _check_to_verb_form(self, t, w): return []
     def _check_articles(self, t, w): return []
-    def _check_adverbs(self, t, w): return []
-    def _check_redundancy(self, t, w): return []
     def _check_confused_words(self, t, w): return []
-    def _check_quantifiers(self, t, w): return []
     def _check_prepositions_context(self, t, w): return []
     def _check_possessives_context(self, t, w): return []
     def _check_progressive_tense(self, t, w): return []

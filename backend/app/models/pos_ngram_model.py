@@ -46,6 +46,7 @@ class POSNGramModel:
                 except LookupError: nltk.download(n, quiet=True)
 
     def _train_on_brown_corpus(self) -> bool:
+        return False # Fallback to builtin to avoid NLTK hang
         if not nltk: return False
         try:
             formatted = [" ".join(sent) for sent in brown.sents(categories=['news', 'editorial', 'reviews'])[:15000]]
