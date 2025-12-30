@@ -1473,29 +1473,42 @@ class GrammarRulesChecker:
                             'sentenceIndex': 0,
                         })
         
-        # Check "go + noun" pattern (should be "go to + noun")
-        # e.g., "go library" -> "go to the library"
-        go_exceptions = {'to', 'home', 'away', 'back', 'on', 'in', 'out', 'up', 'down', 
-                        'ahead', 'there', 'here', 'now', 'first', 'fast', 'slow'}
-        common_places = {'library', 'school', 'church', 'hospital', 'store', 'market',
-                        'park', 'mall', 'gym', 'cinema', 'theater', 'restaurant', 
-                        'office', 'bank', 'shop', 'supermarket', 'university', 'college'}
+        # Check "go + noun" pattern
+        # Fixes "go library" -> "go to the library" vs "go school" -> "go to school"
+        
+        # Places that typically take NO article (Zero Article)
+        zero_article_places = {'home', 'work', 'school', 'bed', 'church', 'college', 'university', 'jail', 'prison', 'camp', 'class'}
+        
+        # Places that typically take "THE"
+        definite_article_places = {'library', 'mall', 'park', 'cinema', 'theater', 'gym', 'station', 'airport', 'doctor', 'dentist', 'bank', 'store', 'shop', 'market', 'office', 'beach', 'zoo', 'museum'}
+        
+        go_exceptions = {'to', 'into', 'in', 'out', 'up', 'down', 'away', 'back', 'on', 'off', 'over', 'through', 'round', 'under', 'ahead', 'there', 'here', 'now', 'first', 'fast', 'slow'}
         
         for i, (word, start, end) in enumerate(words):
             if word in ('go', 'goes', 'went', 'going') and i + 1 < len(words):
                 next_word, next_start, next_end = words[i + 1]
                 
-                # If next word is a place/noun and not an exception
-                if next_word not in go_exceptions and (next_word in common_places or 
-                    (next_word.endswith('s') and len(next_word) > 3)):  # plural nouns
-                    errors.append({
-                        'type': 'grammar',
-                        'position': {'start': next_start, 'end': next_end},
-                        'original': text[next_start:next_end],
-                        'suggestion': 'to the ' + text[next_start:next_end],
-                        'explanation': f'Use "go to the {next_word}" or "go to {next_word}".',
-                        'sentenceIndex': 0,
-                    })
+                if next_word not in go_exceptions:
+                    # Case 1: Needs "to" only (e.g., "go school" -> "go to school")
+                    if next_word in zero_article_places:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': next_start, 'end': next_end},
+                            'original': text[next_start:next_end],
+                            'suggestion': 'to ' + text[next_start:next_end],
+                            'explanation': f'Use "to" before "{next_word}".',
+                            'sentenceIndex': 0,
+                        })
+                    # Case 2: Needs "to the" (e.g., "go library" -> "go to the library")
+                    elif next_word in definite_article_places or (next_word.endswith('s') and next_word not in zero_article_places):
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': next_start, 'end': next_end},
+                            'original': text[next_start:next_end],
+                            'suggestion': 'to the ' + text[next_start:next_end],
+                            'explanation': f'Use "to the" before "{next_word}".',
+                            'sentenceIndex': 0,
+                        })
         
         return errors
     

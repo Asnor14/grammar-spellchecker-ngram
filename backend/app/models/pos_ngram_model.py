@@ -30,7 +30,8 @@ class POSNGramModel:
     """
     
     # Probability threshold for flagging unusual structures
-    STRUCTURE_THRESHOLD = -15.0  # Log probability
+    # Tuned for Brown Corpus (lower = less sensitive/fewer false alarms)
+    STRUCTURE_THRESHOLD = -28.0  # Log probability
     
     # Common valid POS patterns (trigrams)
     VALID_PATTERNS = {
