@@ -91,8 +91,9 @@ class POSNGramModel:
         
         self._ensure_nltk_resources()
         
-        # Train on built-in patterns
-        self._train_on_builtin_patterns()
+        # Try training on Brown corpus first, fallback to builtin patterns
+        if not self._train_on_brown_corpus():
+            self._train_on_builtin_patterns()
     
     def _ensure_nltk_resources(self):
         """Ensure required NLTK resources are available."""
@@ -100,6 +101,7 @@ class POSNGramModel:
             resources = [
                 ('tokenizers/punkt', 'punkt'),
                 ('taggers/averaged_perceptron_tagger', 'averaged_perceptron_tagger'),
+                ('corpora/brown', 'brown'),
             ]
             for path, name in resources:
                 try:
@@ -109,6 +111,47 @@ class POSNGramModel:
                         nltk.download(name, quiet=True)
                     except:
                         pass
+    
+    def _train_on_brown_corpus(self) -> bool:
+        """
+        Train on NLTK Brown Corpus for academic-grade accuracy.
+        
+        Returns:
+            True if training succeeded, False if fallback is needed
+        """
+        if not nltk:
+            return False
+        
+        try:
+            # Load sentences from selected categories
+            categories = ['news', 'editorial', 'reviews', 'government']
+            formatted_sentences = []
+            
+            for category in categories:
+                try:
+                    sents = brown.sents(categories=category)
+                    for sent in sents:
+                        # Format as string
+                        formatted_sentences.append(' '.join(sent))
+                except:
+                    continue
+            
+            if not formatted_sentences:
+                return False
+            
+            # Limit to reasonable training size for performance
+            max_sentences = 5000
+            if len(formatted_sentences) > max_sentences:
+                formatted_sentences = formatted_sentences[:max_sentences]
+            
+            print(f"Training POS N-gram model on {len(formatted_sentences)} Brown Corpus sentences...")
+            self.train(formatted_sentences)
+            print(f"POS N-gram model trained successfully!")
+            return True
+            
+        except Exception as e:
+            print(f"Brown Corpus training failed: {e}. Using fallback.")
+            return False
     
     def _train_on_builtin_patterns(self):
         """Train on common English sentence patterns."""

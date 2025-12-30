@@ -27,68 +27,92 @@ class SemanticChecker:
     # Format: verb -> {compatible_nouns: high_score, incompatible_nouns: low_score}
     # Scores range from 0.0 (incompatible) to 1.0 (highly compatible)
     VERB_OBJECT_COMPATIBILITY = {
-        # Drinking verbs
-        'drink': {
-            'compatible': {'water', 'coffee', 'tea', 'juice', 'milk', 'beer', 'wine', 'soda', 
-                          'beverage', 'liquid', 'drink', 'cocktail', 'smoothie'},
-            'incompatible': {'table', 'chair', 'book', 'paper', 'wall', 'floor', 'car', 'house',
-                            'computer', 'phone', 'door', 'window', 'rock', 'stone', 'dirt'}
-        },
-        # Eating verbs
-        'eat': {
-            'compatible': {'food', 'meal', 'breakfast', 'lunch', 'dinner', 'apple', 'bread',
-                          'rice', 'meat', 'fish', 'chicken', 'fruit', 'vegetable', 'pizza',
-                          'sandwich', 'cake', 'snack', 'burger'},
-            'incompatible': {'table', 'chair', 'car', 'house', 'computer', 'phone', 'book',
-                            'rock', 'metal', 'plastic', 'glass', 'wall', 'floor', 'road'}
-        },
-        # Reading verbs
-        'read': {
-            'compatible': {'book', 'article', 'paper', 'document', 'text', 'message', 'email',
-                          'novel', 'magazine', 'newspaper', 'report', 'letter', 'story', 'poem'},
-            'incompatible': {'water', 'food', 'car', 'wall', 'floor', 'chair', 'rock', 'air'}
-        },
-        # Writing verbs
-        'write': {
-            'compatible': {'book', 'letter', 'email', 'message', 'paper', 'article', 'essay',
-                          'report', 'story', 'poem', 'note', 'document', 'code', 'text'},
-            'incompatible': {'water', 'food', 'car', 'wall', 'rock', 'air', 'sun', 'moon'}
-        },
-        # Driving verbs
+        # -- MOTION --
         'drive': {
-            'compatible': {'car', 'truck', 'bus', 'vehicle', 'motorcycle', 'taxi', 'uber',
-                          'van', 'automobile', 'tractor'},
+            'compatible': {'car', 'truck', 'bus', 'vehicle', 'motorcycle', 'taxi', 'van', 'tractor'},
             'incompatible': {'water', 'food', 'book', 'paper', 'wall', 'rock', 'tree', 'cat'}
         },
-        # Cooking verbs
+        'fly': {
+            'compatible': {'plane', 'airplane', 'jet', 'helicopter', 'kite', 'drone', 'flag'},
+            'incompatible': {'car', 'truck', 'house', 'road', 'ocean', 'desk'}
+        },
+        'ride': {
+            'compatible': {'bike', 'bicycle', 'horse', 'pony', 'motorcycle', 'bus', 'train'},
+            'incompatible': {'house', 'computer', 'book', 'ocean', 'cloud'}
+        },
+        
+        # -- CONSUMPTION --
+        'drink': {
+            'compatible': {'water', 'coffee', 'tea', 'juice', 'milk', 'beer', 'wine', 'soda', 'liquid'},
+            'incompatible': {'table', 'chair', 'book', 'paper', 'wall', 'floor', 'car', 'phone'}
+        },
+        'eat': {
+            'compatible': {'food', 'meal', 'breakfast', 'lunch', 'dinner', 'bread', 'rice', 'meat', 'fruit', 'vegetable', 'pizza', 'sandwich', 'burger', 'cake'},
+            'incompatible': {'table', 'chair', 'car', 'house', 'computer', 'phone', 'book', 'metal', 'glass'}
+        },
         'cook': {
-            'compatible': {'food', 'meal', 'dinner', 'breakfast', 'lunch', 'rice', 'meat',
-                          'fish', 'chicken', 'vegetable', 'soup', 'pasta', 'egg'},
-            'incompatible': {'book', 'computer', 'car', 'phone', 'rock', 'metal', 'wall'}
+            'compatible': {'food', 'meal', 'dinner', 'breakfast', 'lunch', 'rice', 'meat', 'chicken', 'vegetable', 'soup', 'egg', 'pasta'},
+            'incompatible': {'book', 'computer', 'car', 'phone', 'rock', 'metal'}
         },
-        # Wearing verbs
+
+        # -- INTERACTION --
+        'read': {
+            'compatible': {'book', 'article', 'paper', 'document', 'text', 'message', 'email', 'novel', 'magazine', 'newspaper', 'story', 'poem', 'sign'},
+            'incompatible': {'water', 'food', 'car', 'wall', 'floor', 'chair', 'rock', 'air'}
+        },
+        'write': {
+            'compatible': {'book', 'letter', 'email', 'message', 'paper', 'article', 'essay', 'report', 'story', 'code', 'text', 'poem'},
+            'incompatible': {'water', 'food', 'car', 'wall', 'rock', 'air', 'sun'}
+        },
         'wear': {
-            'compatible': {'clothes', 'shirt', 'pants', 'dress', 'shoes', 'hat', 'jacket',
-                          'coat', 'suit', 'uniform', 'glasses', 'watch', 'jewelry'},
-            'incompatible': {'food', 'water', 'car', 'house', 'book', 'computer', 'wall'}
+            'compatible': {'clothes', 'shirt', 'pants', 'dress', 'shoes', 'hat', 'jacket', 'coat', 'suit', 'glasses', 'watch', 'jewelry'},
+            'incompatible': {'food', 'water', 'car', 'house', 'book', 'computer'}
         },
-        # Breaking verbs
+        'play': {
+            'compatible': {'game', 'sport', 'music', 'guitar', 'piano', 'football', 'soccer', 'basketball', 'cards', 'chess', 'role'},
+            'incompatible': {'food', 'water', 'house', 'car', 'work', 'job'}
+        },
+        
+        # -- ABSTRACT --
+        'solve': {
+            'compatible': {'problem', 'puzzle', 'mystery', 'crime', 'equation', 'issue', 'case'},
+            'incompatible': {'water', 'food', 'car', 'dog', 'cat', 'tree'}
+        },
+        'waste': {
+            'compatible': {'time', 'money', 'resource', 'energy', 'opportunity', 'food', 'water'},
+            'incompatible': {'problem', 'solution', 'answer', 'question'}
+        },
+        
+        # -- CREATION/DESTRUCTION --
         'break': {
-            'compatible': {'glass', 'window', 'plate', 'cup', 'rule', 'law', 'record',
-                          'bone', 'ice', 'egg', 'promise', 'silence', 'news'},
-            'incompatible': {'water', 'air', 'light', 'sound', 'thought', 'idea'}
+            'compatible': {'glass', 'window', 'plate', 'cup', 'rule', 'law', 'record', 'bone', 'ice', 'promise'},
+            'incompatible': {'water', 'air', 'light', 'sound', 'thought'}
         },
-        # Opening verbs
+        'build': {
+            'compatible': {'house', 'building', 'bridge', 'wall', 'structure', 'tower', 'road'},
+            'incompatible': {'water', 'air', 'sound', 'thought', 'idea'}
+        },
         'open': {
-            'compatible': {'door', 'window', 'book', 'box', 'letter', 'email', 'file',
-                          'account', 'business', 'bottle', 'can', 'package', 'gift'},
+            'compatible': {'door', 'window', 'book', 'box', 'letter', 'email', 'file', 'account', 'bottle'},
             'incompatible': {'water', 'air', 'light', 'sound'}
         },
-        # Closing verbs
         'close': {
-            'compatible': {'door', 'window', 'book', 'box', 'account', 'business', 'deal',
-                          'file', 'lid', 'curtain', 'eyes'},
+            'compatible': {'door', 'window', 'book', 'box', 'account', 'deal', 'file', 'eyes'},
             'incompatible': {'water', 'air', 'light', 'rock'}
+        },
+        
+        # -- LEARNING --
+        'teach': {
+            'compatible': {'student', 'class', 'subject', 'lesson', 'course', 'skill', 'language', 'math'},
+            'incompatible': {'water', 'car', 'rock', 'wall', 'table'}
+        },
+        'learn': {
+            'compatible': {'skill', 'language', 'lesson', 'subject', 'word', 'concept', 'method'},
+            'incompatible': {'water', 'rock', 'wall', 'car', 'table'}
+        },
+        'study': {
+            'compatible': {'subject', 'lesson', 'book', 'course', 'language', 'science', 'history', 'math'},
+            'incompatible': {'water', 'rock', 'car', 'wall', 'food'}
         },
     }
     
