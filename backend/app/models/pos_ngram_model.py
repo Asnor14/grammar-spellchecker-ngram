@@ -29,9 +29,8 @@ class POSNGramModel:
         "I go home" -> [PRP, VBP, NN] -> Higher probability (common pattern)
     """
     
-    # Probability threshold for flagging unusual structures
-    # Tuned for Brown Corpus (lower = less sensitive/fewer false alarms)
-    STRUCTURE_THRESHOLD = -28.0  # Log probability
+    # Tuned threshold for strict detection
+    STRUCTURE_THRESHOLD = -10.0
     
     # Common valid POS patterns (trigrams)
     VALID_PATTERNS = {
@@ -69,14 +68,14 @@ class POSNGramModel:
     
     # Invalid patterns that indicate errors
     INVALID_PATTERNS = {
-        ('DT', 'VB', 'NN'),      # the go home (article + base verb)
-        ('DT', 'VBP', 'NN'),     # the eat food
-        ('DT', 'VBZ', 'NN'),     # the eats food
-        ('VBZ', 'VBZ', 'NN'),    # eats eats food
-        ('VBP', 'VBP', 'NN'),    # eat eat food
-        ('DT', 'DT', 'NN'),      # the the dog
-        ('NN', 'NN', 'VB'),      # dog cat go (unusual)
-        ('VB', 'VB', 'VB'),      # go go go (unusual)
+        ('DT', 'VB', 'NN'),
+        ('DT', 'VBP', 'NN'),
+        ('DT', 'VBZ', 'NN'),
+        ('NN', 'NN', 'VB'),  # Cat Dog Go
+        ('NN', 'NN', 'VBD'), # Cat Dog Went
+        ('NN', 'NN', 'VBP'), # Cat Dog Eat
+        ('VB', 'VB', 'VB'),
+        ('PRP', 'NN', 'VBD'), # I cat went (Pronoun Noun Verb)
     }
     
     def __init__(self):

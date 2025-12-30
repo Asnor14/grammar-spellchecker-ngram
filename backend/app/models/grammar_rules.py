@@ -136,6 +136,7 @@ class GrammarRulesChecker:
         'manage': ('managed', 'managed', 'manages', 'managing'),
         'hope': ('hoped', 'hoped', 'hopes', 'hoping'),
         'expect': ('expected', 'expected', 'expects', 'expecting'),
+        'explain': ('explained', 'explained', 'explains', 'explaining'),
         'prepare': ('prepared', 'prepared', 'prepares', 'preparing'),
         'receive': ('received', 'received', 'receives', 'receiving'),
         'suppose': ('supposed', 'supposed', 'supposes', 'supposing'),
@@ -170,6 +171,7 @@ class GrammarRulesChecker:
         'either', 'neither', 'one', 'battery', 'phone', 'brother', 'sister',
         'mother', 'father', 'car', 'computer', 'person', 'man', 'woman',
         'child', 'boy', 'girl', 'friend', 'teacher', 'student', 'dog', 'cat',
+        'driver', 'writer', 'player', 'worker', 'manager', 'user', 'owner', # Added common roles
         # Uncountable nouns (always singular)
         'weather', 'news', 'traffic', 'information', 'advice', 'homework',
         'knowledge', 'furniture', 'equipment', 'luggage', 'baggage', 'money',
@@ -279,6 +281,7 @@ class GrammarRulesChecker:
         
         # Check infinitive patterns (forget bring -> forget to bring)
         errors.extend(self._check_infinitive_patterns(text, words))
+        errors.extend(self._check_to_verb_form(text, words)) # NEW
         
         # Check article usage (a/an)
         errors.extend(self._check_articles(text, words))
@@ -459,6 +462,27 @@ class GrammarRulesChecker:
                             'sentenceIndex': 0,
                         })
         
+        return errors
+
+    def _check_to_verb_form(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for correct base form after 'to' (e.g., 'to relaxed' -> 'to relax').
+        """
+        errors = []
+        for i, (word, start, end) in enumerate(words):
+            if i > 0 and words[i-1][0] == 'to':
+                # Check if word is a verb form but not the base form
+                if word in self.verb_base_lookup:
+                    base = self.verb_base_lookup[word]
+                    if word != base:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': base,
+                            'explanation': f'Use base form "{base}" after "to".',
+                            'sentenceIndex': 0,
+                        })
         return errors
     
     def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]], force_past: bool = False) -> List[Dict]:
@@ -1422,6 +1446,9 @@ class GrammarRulesChecker:
             'listen me': ('listen to me', 'Use "listen to" before a person.'),
             'listening me': ('listening to me', 'Use "listening to".'),
             'explain me': ('explain to me', 'Use "explain to" before a person.'),
+            'explain him': ('explain to him', 'Use "explain to" before a person.'),
+            'explain her': ('explain to her', 'Use "explain to" before a person.'),
+            'explain them': ('explain to them', 'Use "explain to" before a person.'),
             'describe me': ('describe to me', 'Use "describe to" before a person.'),
         }
         
@@ -1474,15 +1501,12 @@ class GrammarRulesChecker:
                         })
         
         # Check "go + noun" pattern
+        # Smart Go Check
         # Fixes "go library" -> "go to the library" vs "go school" -> "go to school"
-        
-        # Places that typically take NO article (Zero Article)
         zero_article_places = {'home', 'work', 'school', 'bed', 'church', 'college', 'university', 'jail', 'prison', 'camp', 'class'}
-        
-        # Places that typically take "THE"
         definite_article_places = {'library', 'mall', 'park', 'cinema', 'theater', 'gym', 'station', 'airport', 'doctor', 'dentist', 'bank', 'store', 'shop', 'market', 'office', 'beach', 'zoo', 'museum'}
-        
-        go_exceptions = {'to', 'into', 'in', 'out', 'up', 'down', 'away', 'back', 'on', 'off', 'over', 'through', 'round', 'under', 'ahead', 'there', 'here', 'now', 'first', 'fast', 'slow'}
+        # 'home' is now an exception
+        go_exceptions = {'to', 'into', 'in', 'out', 'up', 'down', 'away', 'back', 'on', 'off', 'over', 'through', 'round', 'under', 'ahead', 'there', 'here', 'now', 'first', 'fast', 'slow', 'home'}
         
         for i, (word, start, end) in enumerate(words):
             if word in ('go', 'goes', 'went', 'going') and i + 1 < len(words):
@@ -1594,26 +1618,24 @@ class GrammarRulesChecker:
         return errors
     
     def _check_quantifiers(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
-        """
-        Check for incorrect quantifier usage.
-        Example: "no enough" -> "not enough"
-        """
         errors = []
-        
-        # Check for "no enough" pattern
-        text_lower = text.lower()
-        if 'no enough' in text_lower:
-            idx = text_lower.find('no enough')
-            # Just flag "no" for replacement with "not"
+        # Check specific "No enough" case at start of string or after punctuation
+        for match in re.finditer(r'(?:^|[.!?]\s+)(No) enough', text, re.IGNORECASE):
+            # We found "No enough", suggest "Not"
+            # match.start(1) is the start of "No"
             errors.append({
-                'type': 'grammar',
-                'position': {'start': idx, 'end': idx + 2},
-                'original': text[idx:idx + 2],
-                'suggestion': 'not',
-                'explanation': 'Use "not enough" instead of "no enough".',
-                'sentenceIndex': 0,
+                'type': 'grammar', 
+                'position': {'start': match.start(1), 'end': match.end(1)}, 
+                'original': match.group(1), 
+                'suggestion': 'Not', 
+                'explanation': 'Use "Not enough" at the start of a sentence.', 
+                'sentenceIndex': 0
             })
         
+        # General case (lowercase mid-sentence)
+        if ' no enough' in text.lower():
+             idx = text.lower().find(' no enough') + 1 # +1 to skip space
+             errors.append({'type': 'grammar', 'position': {'start': idx, 'end': idx+2}, 'original': text[idx:idx+2], 'suggestion': 'not', 'explanation': 'Use "not enough".', 'sentenceIndex': 0})
         return errors
     
     def _check_prepositions_context(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
