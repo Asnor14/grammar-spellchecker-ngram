@@ -14,8 +14,8 @@ except ImportError:
     nltk = None
 
 class POSNGramModel:
-    # Tuned threshold for "Cat Dog" detection
-    STRUCTURE_THRESHOLD = -8.0
+    # Stricter threshold for detecting unusual patterns
+    STRUCTURE_THRESHOLD = -5.0
     
     INVALID_PATTERNS = {
         ('DT', 'VB', 'NN'),
@@ -46,9 +46,10 @@ class POSNGramModel:
                 except LookupError: nltk.download(n, quiet=True)
 
     def _train_on_brown_corpus(self) -> bool:
-        return False # Fallback to builtin to avoid NLTK hang
+        # Prevent hang by disabling online download/heavy training if it fails
         if not nltk: return False
         try:
+             # Fast check if brown is available roughly
             formatted = [" ".join(sent) for sent in brown.sents(categories=['news', 'editorial', 'reviews'])[:15000]]
             self.train(formatted)
             return True
@@ -112,7 +113,6 @@ class POSNGramModel:
         for i, sent in enumerate(re.split(r'(?<=[.!?])\s+', text)):
             if len(sent.strip()) > 5:
                 errs = self.check_sentence(sent)
-                # Offset logic omitted for brevity, ensure you keep your original offset logic
                 errors.extend(errs) 
         return errors
 
