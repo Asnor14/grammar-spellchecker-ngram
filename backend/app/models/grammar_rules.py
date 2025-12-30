@@ -154,6 +154,8 @@ class GrammarRulesChecker:
     PLURAL_SUBJECTS = {
         'they', 'we', 'these', 'those', 'people', 'children', 'men', 'women',
         'friends', 'students', 'teachers', 'boys', 'girls', 'dogs', 'cats',
+        'classmates', 'others', 'parents', 'relatives', 'siblings',
+        'words', 'chairs', 'books', 'things',
     }
     
     # be verb forms
@@ -192,6 +194,12 @@ class GrammarRulesChecker:
         """
         errors = []
         
+        # GLOBAL PAST TENSE DETECTION - check entire text for past indicators
+        past_indicators = {'yesterday', 'ago', 'last week', 'last month', 'last year', 
+                          'last night', 'earlier', 'previously', 'before', 'already'}
+        text_lower = text.lower()
+        global_past_context = any(ind in text_lower for ind in past_indicators)
+        
         # Check capitalization at sentence start
         errors.extend(self._check_sentence_capitalization(text))
         
@@ -207,8 +215,8 @@ class GrammarRulesChecker:
         # Check possessive pronouns
         errors.extend(self._check_possessive_pronouns(text, words))
         
-        # Check verb tense after past tense markers
-        errors.extend(self._check_verb_tense(text, words))
+        # Check verb tense after past tense markers (with GLOBAL flag)
+        errors.extend(self._check_verb_tense(text, words, force_past=global_past_context))
         
         # Check present participle with be verbs
         errors.extend(self._check_progressive_tense(text, words))
@@ -233,6 +241,37 @@ class GrammarRulesChecker:
         
         # Check for incorrect regularized past tense (e.g., "buyed" -> "bought")
         errors.extend(self._check_incorrect_regularized_past(text, words))
+        
+        # NEW RULE METHODS
+        # Check pronoun "i" capitalization
+        errors.extend(self._check_pronoun_capitalization(text, words))
+        
+        # Check double comparatives (more better -> better)
+        errors.extend(self._check_double_comparatives(text, words))
+        
+        # Check infinitive patterns (forget bring -> forget to bring)
+        errors.extend(self._check_infinitive_patterns(text, words))
+        
+        # Check article usage (a/an)
+        errors.extend(self._check_articles(text, words))
+        
+        # Check adverb usage (runs quick -> runs quickly)
+        errors.extend(self._check_adverbs(text, words))
+        
+        # Check redundant phrases (return back -> return)
+        errors.extend(self._check_redundancy(text, words))
+        
+        # Check common preposition errors
+        errors.extend(self._check_prepositions(text, words))
+        
+        # Check confused words (your/you're, their/there)
+        errors.extend(self._check_confused_words(text, words))
+        
+        # Check quantifiers (no enough -> not enough)
+        errors.extend(self._check_quantifiers(text, words))
+        
+        # Check prepositions with context (bring at home, angry to me)
+        errors.extend(self._check_prepositions_context(text, words))
         
         return errors
     
@@ -281,47 +320,55 @@ class GrammarRulesChecker:
         """Check subject-verb agreement."""
         errors = []
         
+        # Adverbs to skip when looking for subject
+        adverbs_to_skip = {'already', 'just', 'always', 'never', 'really', 'often', 
+                          'usually', 'sometimes', 'also', 'only', 'even', 'still'}
+        
         for i, (word, start, end) in enumerate(words):
             # Check "it/battery/etc + are" → should be "is"
             if i > 0:
                 prev_word = words[i - 1][0]
                 
+                # ADVERB SKIPPER: If prev_word is an adverb, look one more back
+                actual_subject = prev_word
+                if prev_word in adverbs_to_skip and i > 1:
+                    actual_subject = words[i - 2][0]
+                
                 # Singular subject + are → is
-                if prev_word in self.SINGULAR_SUBJECTS and word == 'are':
+                if actual_subject in self.SINGULAR_SUBJECTS and word == 'are':
                     errors.append({
                         'type': 'grammar',
                         'position': {'start': start, 'end': end},
                         'original': text[start:end],
                         'suggestion': 'is',
-                        'explanation': f'Subject-verb agreement: "{prev_word}" is singular and requires "is" not "are".',
+                        'explanation': f'Subject-verb agreement: "{actual_subject}" is singular and requires "is" not "are".',
                         'sentenceIndex': 0,
                     })
                 
                 # Singular subject + were → was
-                elif prev_word in self.SINGULAR_SUBJECTS and word == 'were':
+                elif actual_subject in self.SINGULAR_SUBJECTS and word == 'were':
                     errors.append({
                         'type': 'grammar',
                         'position': {'start': start, 'end': end},
                         'original': text[start:end],
                         'suggestion': 'was',
-                        'explanation': f'Subject-verb agreement: "{prev_word}" is singular and requires "was" not "were".',
+                        'explanation': f'Subject-verb agreement: "{actual_subject}" is singular and requires "was" not "were".',
                         'sentenceIndex': 0,
                     })
                 
                 # Plural subject + is → are
-                elif prev_word in self.PLURAL_SUBJECTS and word == 'is':
+                elif actual_subject in self.PLURAL_SUBJECTS and word == 'is':
                     errors.append({
                         'type': 'grammar',
                         'position': {'start': start, 'end': end},
                         'original': text[start:end],
                         'suggestion': 'are',
-                        'explanation': f'Subject-verb agreement: "{prev_word}" is plural and requires "are" not "is".',
+                        'explanation': f'Subject-verb agreement: "{actual_subject}" is plural and requires "are" not "is".',
                         'sentenceIndex': 0,
                     })
                 
                 # Plural subject + was → were
-                # BUT skip if next word is a verb (will be handled by past tense check)
-                elif prev_word in self.PLURAL_SUBJECTS and word == 'was':
+                elif actual_subject in self.PLURAL_SUBJECTS and word == 'was':
                     # Check if next word is a verb - if so, skip (past tense check will handle)
                     next_word = words[i + 1][0] if i + 1 < len(words) else ""
                     past_indicators = {'yesterday', 'ago', 'last', 'before', 'earlier', 'previously', 'already'}
@@ -334,7 +381,7 @@ class GrammarRulesChecker:
                             'position': {'start': start, 'end': end},
                             'original': text[start:end],
                             'suggestion': 'were',
-                            'explanation': f'Subject-verb agreement: "{prev_word}" is plural and requires "were" not "was".',
+                            'explanation': f'Subject-verb agreement: "{actual_subject}" is plural and requires "were" not "was".',
                             'sentenceIndex': 0,
                         })
         
@@ -383,7 +430,7 @@ class GrammarRulesChecker:
         
         return errors
     
-    def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+    def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]], force_past: bool = False) -> List[Dict]:
         """Check verb tense consistency after past tense contexts."""
         errors = []
         
@@ -391,48 +438,68 @@ class GrammarRulesChecker:
         past_indicators = {'yesterday', 'ago', 'last', 'before', 'earlier', 'previously', 'already'}
         
         # Words that indicate a completed action with ongoing result (use past tense)
-        # e.g., "bought a new phone but..." suggests the buying happened in the past
         result_context = {'but', 'however', 'unfortunately', 'sadly', 'yet', 'still', 'now'}
         
-        has_past_context = any(w[0] in past_indicators for w in words)
+        # Use global flag OR local detection
+        has_past_context = force_past or any(w[0] in past_indicators for w in words)
         has_result_context = any(w[0] in result_context for w in words)
         
-        # Check for third person singular subject + base verb
+        # ALL subjects that can have main verbs after them
+        all_subjects = {'i', 'we', 'you', 'they', 'he', 'she', 'it', 
+                       'brother', 'sister', 'mother', 'father', 'friend', 'teacher', 'student'}
+        all_subjects = all_subjects | self.SINGULAR_SUBJECTS | self.PLURAL_SUBJECTS
+        
+        # Adverbs to skip
+        adverbs_to_skip = {'already', 'just', 'always', 'never', 'really', 'often', 
+                          'usually', 'sometimes', 'also', 'only', 'even', 'still'}
+        
+        # Check for subject + base verb with past context
         for i, (word, start, end) in enumerate(words):
             if i > 0:
                 prev_word = words[i - 1][0]
                 
+                # ADVERB SKIPPER
+                actual_subject = prev_word
+                if prev_word in adverbs_to_skip and i > 1:
+                    actual_subject = words[i - 2][0]
+                
                 # Check if there's result context after this word
                 has_result_after = any(w[0] in result_context for w in words[i:])
                 
-                # "brother/sister/he/she + buy" → "bought" if past context or result context
-                if prev_word in {'brother', 'sister', 'he', 'she', 'it', 'mother', 'father', 'friend'}:
-                    if word in self.VERB_FORMS:
+                # If past context, force past tense for ANY subject + base verb
+                if has_past_context or has_result_after:
+                    if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
                         forms = self.VERB_FORMS[word]
+                        past_form = forms[0]  # past tense
                         
-                        # Determine tense based on context
-                        if has_past_context or has_result_after:
-                            # Use past tense for completed actions
-                            correct = forms[0]  # past tense
-                            errors.append({
-                                'type': 'grammar',
-                                'position': {'start': start, 'end': end},
-                                'original': text[start:end],
-                                'suggestion': correct,
-                                'explanation': f'Verb tense: Use "{correct}" (past tense) for completed actions.',
-                                'sentenceIndex': 0,
-                            })
-                        else:
-                            # Use present 3rd person for habitual/general statements
-                            correct = forms[2]  # present 3rd person
-                            errors.append({
-                                'type': 'grammar',
-                                'position': {'start': start, 'end': end},
-                                'original': text[start:end],
-                                'suggestion': correct,
-                                'explanation': f'Subject-verb agreement: Use "{correct}" with third-person singular subject.',
-                                'sentenceIndex': 0,
-                            })
+                        # Only flag if: current word is base form AND subject precedes it
+                        if actual_subject in all_subjects and word != past_form:
+                            # Check it's base form (not already past)
+                            if word == word:  # base form check (it's in VERB_FORMS as key)
+                                errors.append({
+                                    'type': 'grammar',
+                                    'position': {'start': start, 'end': end},
+                                    'original': text[start:end],
+                                    'suggestion': past_form,
+                                    'explanation': f'Use past tense "{past_form}" because of past context.',
+                                    'sentenceIndex': 0,
+                                })
+                else:
+                    # No past context - check third person singular requires -s
+                    if actual_subject in {'brother', 'sister', 'he', 'she', 'it', 'mother', 'father', 'friend'}:
+                        if word in self.VERB_FORMS:
+                            forms = self.VERB_FORMS[word]
+                            third_person_form = forms[2]  # present 3rd person
+                            
+                            if word != third_person_form:
+                                errors.append({
+                                    'type': 'grammar',
+                                    'position': {'start': start, 'end': end},
+                                    'original': text[start:end],
+                                    'suggestion': third_person_form,
+                                    'explanation': f'Subject-verb agreement: Use "{third_person_form}" with third-person singular subject.',
+                                    'sentenceIndex': 0,
+                                })
         
         return errors
     
@@ -680,8 +747,14 @@ class GrammarRulesChecker:
         """Check for missing -s on third person singular verbs."""
         errors = []
         
-        # Third person singular subjects
+        # Third person singular subjects - EXCLUDE 'i' and 'you'
         third_person_singular = {'she', 'he', 'it'} | self.SINGULAR_SUBJECTS
+        # Explicitly remove 'i' and 'you' to avoid "I reads" or "you reads" errors
+        non_third_person = {'i', 'you', 'we', 'they'}
+        
+        # Adverbs to skip when looking for subject
+        adverbs_to_skip = {'already', 'just', 'always', 'never', 'really', 'often', 
+                          'usually', 'sometimes', 'also', 'only', 'even', 'still'}
         
         # Conjunctions that continue the subject
         conjunctions = {'and', 'or', 'but'}
@@ -694,7 +767,7 @@ class GrammarRulesChecker:
         # Find the sentence subject (first third person singular word)
         sentence_subject = None
         for word, _, _ in words:
-            if word in third_person_singular:
+            if word in third_person_singular and word not in non_third_person:
                 sentence_subject = word
                 break
         
@@ -702,27 +775,54 @@ class GrammarRulesChecker:
             if i > 0:
                 prev_word = words[i - 1][0]
                 
+                # ADVERB SKIPPER: If prev_word is an adverb, look one more back
+                actual_subject = prev_word
+                if prev_word in adverbs_to_skip and i > 1:
+                    actual_subject = words[i - 2][0]
+                
                 # Check if word is a base verb
                 if word in self.VERB_FORMS and word not in skip_verbs:
                     should_conjugate = False
                     subject = None
                     
-                    # Check if previous word is third person singular subject
-                    if prev_word in third_person_singular:
+                    # FIX: Don't conjugate if subject is 'i' or 'you'
+                    if actual_subject in non_third_person:
+                        continue
+                    
+                    # Check if actual subject is third person singular subject
+                    if actual_subject in third_person_singular:
                         should_conjugate = True
-                        subject = prev_word
+                        subject = actual_subject
                     # Check if previous word is conjunction and sentence has 3rd person subject
                     elif prev_word in conjunctions and sentence_subject:
-                        should_conjugate = True  
-                        subject = sentence_subject
+                        # BUT: First check if there's a non-third-person subject before the conjunction
+                        # This prevents "I sit and reads" from triggering
+                        found_non_third = False
+                        for j in range(i - 2, -1, -1):
+                            check_word = words[j][0]
+                            if check_word in non_third_person:
+                                found_non_third = True
+                                break
+                            elif check_word in third_person_singular:
+                                break
+                        
+                        if not found_non_third:
+                            should_conjugate = True  
+                            subject = sentence_subject
                     # Check if word before conjunction is a verb (parallel structure)
                     elif prev_word in conjunctions:
                         # Look back to see if we're in a "she verbs and verb" pattern
+                        # ABORT if we find I/you/we/they first
                         for j in range(i - 2, -1, -1):
                             check_word = words[j][0]
-                            if check_word in third_person_singular:
+                            if check_word in non_third_person:
+                                # Subject is I/you/we/they - do NOT suggest third-person form
+                                should_conjugate = False
+                                break
+                            elif check_word in third_person_singular and check_word not in non_third_person:
                                 should_conjugate = True
                                 subject = check_word
+                                break
                             elif check_word in skip_verbs:
                                 break
                     
@@ -933,6 +1033,552 @@ class GrammarRulesChecker:
                     'explanation': f'Irregular verb: use "{correct}" instead of "{word}".',
                     'sentenceIndex': 0,
                 })
+        
+        return errors
+    
+    def _check_pronoun_capitalization(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for lowercase 'i' pronoun that should be capitalized.
+        Example: "i went" -> "I went"
+        """
+        errors = []
+        
+        for word, start, end in words:
+            if word == 'i':
+                # Check it's a standalone 'i', not part of another word
+                # Already handled by tokenization, but double check
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': start, 'end': end},
+                    'original': text[start:end],
+                    'suggestion': 'I',
+                    'explanation': 'The pronoun "I" should always be capitalized.',
+                    'sentenceIndex': 0,
+                })
+        
+        return errors
+    
+    def _check_double_comparatives(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for redundant double comparatives.
+        Example: "more better" -> "better", "most best" -> "best"
+        """
+        errors = []
+        
+        # Patterns: more/most + already comparative/superlative
+        double_comparatives = {
+            'more better': 'better',
+            'more worse': 'worse',
+            'more faster': 'faster',
+            'more slower': 'slower',
+            'more louder': 'louder',
+            'more quieter': 'quieter',
+            'more bigger': 'bigger',
+            'more smaller': 'smaller',
+            'more easier': 'easier',
+            'more harder': 'harder',
+            'most best': 'best',
+            'most worst': 'worst',
+            'most fastest': 'fastest',
+            'most slowest': 'slowest',
+            'most loudest': 'loudest',
+            'most biggest': 'biggest',
+            'most smallest': 'smallest',
+            'most easiest': 'easiest',
+        }
+        
+        text_lower = text.lower()
+        
+        for incorrect, correct in double_comparatives.items():
+            if incorrect in text_lower:
+                idx = text_lower.find(incorrect)
+                end_idx = idx + len(incorrect)
+                
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': idx, 'end': end_idx},
+                    'original': text[idx:end_idx],
+                    'suggestion': correct,
+                    'explanation': f'Double comparative: use "{correct}" instead of "{incorrect}".',
+                    'sentenceIndex': 0,
+                })
+        
+        return errors
+    
+    def _check_infinitive_patterns(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for missing 'to' after verbs that require infinitives.
+        Example: "forget bring" -> "forget to bring"
+        """
+        errors = []
+        
+        # Verbs that require 'to' + infinitive
+        infinitive_verbs = {
+            'want', 'wants', 'wanted',
+            'need', 'needs', 'needed',
+            'decide', 'decides', 'decided',
+            'forget', 'forgets', 'forgot', 'forgotten',
+            'hope', 'hopes', 'hoped',
+            'plan', 'plans', 'planned',
+            'learn', 'learns', 'learned', 'learnt',
+            'agree', 'agrees', 'agreed',
+            'promise', 'promises', 'promised',
+            'refuse', 'refuses', 'refused',
+            'expect', 'expects', 'expected',
+            'prepare', 'prepares', 'prepared',
+            'try', 'tries', 'tried',
+            'manage', 'manages', 'managed',
+            'afford', 'affords', 'afforded',
+            'choose', 'chooses', 'chose', 'chosen',
+            'offer', 'offers', 'offered',
+        }
+        
+        for i, (word, start, end) in enumerate(words):
+            if word in infinitive_verbs:
+                # Check if next word exists and is NOT 'to'
+                if i + 1 < len(words):
+                    next_word, next_start, next_end = words[i + 1]
+                    
+                    # If next word is a base verb (not 'to' and in VERB_FORMS)
+                    if next_word != 'to' and next_word in self.VERB_FORMS:
+                        # Suggest adding 'to'
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': next_start, 'end': next_end},
+                            'original': text[next_start:next_end],
+                            'suggestion': 'to ' + text[next_start:next_end],
+                            'explanation': f'Use infinitive form: "{word} to {next_word}".',
+                            'sentenceIndex': 0,
+                        })
+        
+        return errors
+    
+    def _check_articles(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for incorrect article usage (a vs an).
+        Example: "a apple" -> "an apple", "an car" -> "a car"
+        """
+        errors = []
+        
+        # Words that start with vowel sounds but consonant letters
+        vowel_sound_consonants = {'hour', 'honest', 'honor', 'honour', 'heir'}
+        
+        # Words that start with consonant sounds but vowel letters
+        consonant_sound_vowels = {'university', 'uniform', 'unique', 'unit', 'united',
+                                   'european', 'one', 'once', 'useful', 'user'}
+        
+        for i, (word, start, end) in enumerate(words):
+            if word in ('a', 'an'):
+                # Check next word
+                if i + 1 < len(words):
+                    next_word, next_start, next_end = words[i + 1]
+                    first_letter = next_word[0] if next_word else ''
+                    
+                    should_be_an = (first_letter in 'aeiou' or 
+                                   next_word.lower() in vowel_sound_consonants)
+                    should_be_a = (first_letter not in 'aeiou' or 
+                                  next_word.lower() in consonant_sound_vowels)
+                    
+                    # Check for special cases
+                    if next_word.lower() in vowel_sound_consonants:
+                        should_be_an = True
+                        should_be_a = False
+                    elif next_word.lower() in consonant_sound_vowels:
+                        should_be_a = True
+                        should_be_an = False
+                    
+                    if word == 'a' and should_be_an and not should_be_a:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': 'an',
+                            'explanation': f'Use "an" before words starting with a vowel sound.',
+                            'sentenceIndex': 0,
+                        })
+                    elif word == 'an' and should_be_a and not should_be_an:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': 'a',
+                            'explanation': f'Use "a" before words starting with a consonant sound.',
+                            'sentenceIndex': 0,
+                        })
+        
+        return errors
+    
+    def _check_adverbs(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for adjectives used where adverbs are required.
+        Example: "He runs quick" -> "He runs quickly"
+        """
+        errors = []
+        
+        # Adjective to adverb mapping
+        adj_to_adv = {
+            'quick': 'quickly',
+            'slow': 'slowly',
+            'loud': 'loudly',
+            'quiet': 'quietly',
+            'soft': 'softly',
+            'hard': 'hard',  # Exception: hard is both adj and adv
+            'fast': 'fast',  # Exception: fast is both adj and adv
+            'bad': 'badly',
+            'easy': 'easily',
+            'careful': 'carefully',
+            'careless': 'carelessly',
+            'beautiful': 'beautifully',
+            'nice': 'nicely',
+            'clear': 'clearly',
+            'safe': 'safely',
+            'perfect': 'perfectly',
+            'complete': 'completely',
+            'immediate': 'immediately',
+            'sudden': 'suddenly',
+            'real': 'really',
+            'extreme': 'extremely',
+        }
+        
+        # Verbs after which we expect adverbs
+        action_verbs = {
+            'run', 'runs', 'ran', 'running',
+            'walk', 'walks', 'walked', 'walking',
+            'speak', 'speaks', 'spoke', 'speaking',
+            'talk', 'talks', 'talked', 'talking',
+            'move', 'moves', 'moved', 'moving',
+            'work', 'works', 'worked', 'working',
+            'drive', 'drives', 'drove', 'driving',
+            'play', 'plays', 'played', 'playing',
+            'sing', 'sings', 'sang', 'singing',
+            'dance', 'dances', 'danced', 'dancing',
+            'write', 'writes', 'wrote', 'writing',
+            'read', 'reads', 'reading',
+            'eat', 'eats', 'ate', 'eating',
+            'sleep', 'sleeps', 'slept', 'sleeping',
+        }
+        
+        for i, (word, start, end) in enumerate(words):
+            if word in action_verbs:
+                # Check next word
+                if i + 1 < len(words):
+                    next_word, next_start, next_end = words[i + 1]
+                    
+                    if next_word in adj_to_adv and adj_to_adv[next_word] != next_word:
+                        adverb = adj_to_adv[next_word]
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': next_start, 'end': next_end},
+                            'original': text[next_start:next_end],
+                            'suggestion': adverb,
+                            'explanation': f'Use adverb "{adverb}" to modify the verb.',
+                            'sentenceIndex': 0,
+                        })
+        
+        return errors
+    
+    def _check_redundancy(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for redundant/tautological phrases.
+        Example: "return back" -> "return", "repeat again" -> "repeat"
+        """
+        errors = []
+        
+        redundant_phrases = {
+            'return back': 'return',
+            'reply back': 'reply',
+            'repeat again': 'repeat',
+            'revert back': 'revert',
+            'join together': 'join',
+            'combine together': 'combine',
+            'merge together': 'merge',
+            'mix together': 'mix',
+            'past history': 'history',
+            'future plans': 'plans',
+            'advance planning': 'planning',
+            'added bonus': 'bonus',
+            'free gift': 'gift',
+            'new innovation': 'innovation',
+            'end result': 'result',
+            'final outcome': 'outcome',
+            'close proximity': 'proximity',
+            'exact same': 'same',
+            'atm machine': 'ATM',
+            'pin number': 'PIN',
+            'completely empty': 'empty',
+            'completely full': 'full',
+            'very unique': 'unique',
+        }
+        
+        text_lower = text.lower()
+        
+        for redundant, correct in redundant_phrases.items():
+            if redundant in text_lower:
+                idx = text_lower.find(redundant)
+                end_idx = idx + len(redundant)
+                
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': idx, 'end': end_idx},
+                    'original': text[idx:end_idx],
+                    'suggestion': correct,
+                    'explanation': f'Redundant phrase: "{redundant}" -> "{correct}".',
+                    'sentenceIndex': 0,
+                })
+        
+        return errors
+    
+    def _check_prepositions(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for common preposition errors (especially ESL errors).
+        """
+        errors = []
+        
+        # Two-word preposition patterns (word + wrong_prep -> correct)
+        preposition_errors = {
+            'married with': ('married to', 'Use "married to" not "married with".'),
+            'good in': ('good at', 'Use "good at" for skills.'),
+            'angry on': ('angry at', 'Use "angry at" or "angry with".'),
+            'different to': ('different from', 'Use "different from".'),
+            'superior than': ('superior to', 'Use "superior to".'),
+            'inferior than': ('inferior to', 'Use "inferior to".'),
+            'consist in': ('consist of', 'Use "consist of".'),
+            'die from': ('die of', 'Usually "die of" for diseases.'),
+        }
+        
+        text_lower = text.lower()
+        
+        for wrong, (correct, explanation) in preposition_errors.items():
+            if wrong in text_lower:
+                idx = text_lower.find(wrong)
+                end_idx = idx + len(wrong)
+                
+                errors.append({
+                    'type': 'grammar',
+                    'position': {'start': idx, 'end': end_idx},
+                    'original': text[idx:end_idx],
+                    'suggestion': correct,
+                    'explanation': explanation,
+                    'sentenceIndex': 0,
+                })
+        
+        # Check "discuss about" (should be just "discuss")
+        for i, (word, start, end) in enumerate(words):
+            if word == 'discuss' and i + 1 < len(words):
+                next_word, next_start, next_end = words[i + 1]
+                if next_word == 'about':
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': next_start, 'end': next_end},
+                        'original': text[next_start:next_end],
+                        'suggestion': '',
+                        'explanation': '"Discuss" doesn\'t need "about" after it.',
+                        'sentenceIndex': 0,
+                    })
+        
+        # Check "lack of" when used as verb (should be just "lack")
+        for i, (word, start, end) in enumerate(words):
+            if word == 'lack' and i + 1 < len(words):
+                next_word, next_start, next_end = words[i + 1]
+                # Check if "lack" is used as verb (after subject)
+                if next_word == 'of' and i > 0:
+                    prev_word = words[i - 1][0]
+                    # If preceded by subject pronoun, it's a verb
+                    if prev_word in ('i', 'we', 'they', 'you', 'he', 'she', 'it'):
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': next_start, 'end': next_end},
+                            'original': text[next_start:next_end],
+                            'suggestion': '',
+                            'explanation': 'As a verb, "lack" doesn\'t need "of".',
+                            'sentenceIndex': 0,
+                        })
+        
+        # Check "go + noun" pattern (should be "go to + noun")
+        # e.g., "go library" -> "go to the library"
+        go_exceptions = {'to', 'home', 'away', 'back', 'on', 'in', 'out', 'up', 'down', 
+                        'ahead', 'there', 'here', 'now', 'first', 'fast', 'slow'}
+        common_places = {'library', 'school', 'church', 'hospital', 'store', 'market',
+                        'park', 'mall', 'gym', 'cinema', 'theater', 'restaurant', 
+                        'office', 'bank', 'shop', 'supermarket', 'university', 'college'}
+        
+        for i, (word, start, end) in enumerate(words):
+            if word in ('go', 'goes', 'went', 'going') and i + 1 < len(words):
+                next_word, next_start, next_end = words[i + 1]
+                
+                # If next word is a place/noun and not an exception
+                if next_word not in go_exceptions and (next_word in common_places or 
+                    (next_word.endswith('s') and len(next_word) > 3)):  # plural nouns
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': next_start, 'end': next_end},
+                        'original': text[next_start:next_end],
+                        'suggestion': 'to the ' + text[next_start:next_end],
+                        'explanation': f'Use "go to the {next_word}" or "go to {next_word}".',
+                        'sentenceIndex': 0,
+                    })
+        
+        return errors
+    
+    def _check_confused_words(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for commonly confused words based on context.
+        your/you're, their/there/they're, its/it's, loose/lose
+        """
+        errors = []
+        
+        for i, (word, start, end) in enumerate(words):
+            # Check your/you're
+            if word == 'your' and i + 1 < len(words):
+                next_word = words[i + 1][0]
+                # If followed by a verb ending in -ing, should be "you're"
+                if next_word.endswith('ing') and len(next_word) > 4:
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': start, 'end': end},
+                        'original': text[start:end],
+                        'suggestion': "you're",
+                        'explanation': '"You\'re" (you are) + verb-ing, not "your".',
+                        'sentenceIndex': 0,
+                    })
+                # "your welcome" -> "you're welcome"
+                elif next_word == 'welcome':
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': start, 'end': end},
+                        'original': text[start:end],
+                        'suggestion': "you're",
+                        'explanation': '"You\'re welcome" not "your welcome".',
+                        'sentenceIndex': 0,
+                    })
+            
+            # Check their/there
+            if word == 'their' and i + 1 < len(words):
+                next_word = words[i + 1][0]
+                # "their is/are/was/were" -> "there is/are/was/were"
+                if next_word in ('is', 'are', 'was', 'were'):
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': start, 'end': end},
+                        'original': text[start:end],
+                        'suggestion': 'there',
+                        'explanation': '"There" + be verb, not "their".',
+                        'sentenceIndex': 0,
+                    })
+            
+            # Check loose/lose
+            if word == 'loose':
+                # Check context for verb usage
+                if i > 0:
+                    prev_word = words[i - 1][0]
+                    # After modal verbs, should be "lose"
+                    if prev_word in ('will', 'would', 'could', 'might', 'may', 'can', 
+                                    'should', 'did', 'do', 'does', "don't", "didn't",
+                                    'to', 'not', "won't", "wouldn't", "couldn't"):
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': 'lose',
+                            'explanation': '"Lose" (verb) not "loose" (adjective).',
+                            'sentenceIndex': 0,
+                        })
+            
+            # Check its/it's
+            if word == "its" and i + 1 < len(words):
+                next_word = words[i + 1][0]
+                # "its" + adjective is often wrong (should be "it's")
+                if next_word in ('a', 'the', 'very', 'really', 'so', 'too', 'not',
+                                'going', 'been', 'being'):
+                    errors.append({
+                        'type': 'grammar',
+                        'position': {'start': start, 'end': end},
+                        'original': text[start:end],
+                        'suggestion': "it's",
+                        'explanation': '"It\'s" (it is) may be needed here, not "its".',
+                        'sentenceIndex': 0,
+                    })
+        
+        return errors
+    
+    def _check_quantifiers(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for incorrect quantifier usage.
+        Example: "no enough" -> "not enough"
+        """
+        errors = []
+        
+        # Check for "no enough" pattern
+        text_lower = text.lower()
+        if 'no enough' in text_lower:
+            idx = text_lower.find('no enough')
+            # Just flag "no" for replacement with "not"
+            errors.append({
+                'type': 'grammar',
+                'position': {'start': idx, 'end': idx + 2},
+                'original': text[idx:idx + 2],
+                'suggestion': 'not',
+                'explanation': 'Use "not enough" instead of "no enough".',
+                'sentenceIndex': 0,
+            })
+        
+        return errors
+    
+    def _check_prepositions_context(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for preposition errors that require context analysis.
+        - "bring ... at home" -> "bring ... from home" or "leave ... at home"
+        - "angry to me" -> "angry with me"
+        """
+        errors = []
+        
+        text_lower = text.lower()
+        
+        # Check "angry to" pattern
+        if 'angry to' in text_lower:
+            idx = text_lower.find('angry to')
+            # Flag "to" for replacement with "with"
+            to_idx = idx + len('angry ')
+            errors.append({
+                'type': 'grammar',
+                'position': {'start': to_idx, 'end': to_idx + 2},
+                'original': text[to_idx:to_idx + 2],
+                'suggestion': 'with',
+                'explanation': 'Use "angry with" or "angry at", not "angry to".',
+                'sentenceIndex': 0,
+            })
+        
+        # Check "bring ... at home" pattern
+        for i, (word, start, end) in enumerate(words):
+            if word == 'bring':
+                # Look ahead for "at home"
+                for j in range(i + 1, min(i + 6, len(words))):
+                    if j + 1 < len(words):
+                        if words[j][0] == 'at' and words[j + 1][0] == 'home':
+                            at_start = words[j][1]
+                            at_end = words[j][2]
+                            errors.append({
+                                'type': 'grammar',
+                                'position': {'start': at_start, 'end': at_end},
+                                'original': text[at_start:at_end],
+                                'suggestion': 'from',
+                                'explanation': 'Use "bring from home" (origin), not "bring at home".',
+                                'sentenceIndex': 0,
+                            })
+                            break
+        
+        # Check "interested for" pattern (should be "interested in")
+        if 'interested for' in text_lower:
+            idx = text_lower.find('interested for')
+            for_idx = idx + len('interested ')
+            errors.append({
+                'type': 'grammar',
+                'position': {'start': for_idx, 'end': for_idx + 3},
+                'original': text[for_idx:for_idx + 3],
+                'suggestion': 'in',
+                'explanation': 'Use "interested in", not "interested for".',
+                'sentenceIndex': 0,
+            })
         
         return errors
 

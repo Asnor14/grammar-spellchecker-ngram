@@ -14,6 +14,8 @@ from app.models.spell_checker import get_spell_checker
 from app.models.punctuation_checker import get_punctuation_checker
 from app.models.grammar_rules import get_grammar_rules_checker
 from app.models.transformer_model import get_transformer_checker
+from app.models.semantic_checker import get_semantic_checker
+from app.models.pos_ngram_model import get_pos_ngram_model
 from app.utils.sentence_splitter import split_sentences, split_sentences_with_positions
 from app.utils.tokenizer import get_word_tokens_with_positions, tokenize
 from app.utils.scorer import calculate_confidence_score, calculate_sentence_fluency
@@ -281,6 +283,54 @@ async def check_text(request: CheckTextRequest):
                 
                 if not overlaps:
                     sentence_errors.append(error)
+            
+            # Check semantic errors (verb-object compatibility)
+            try:
+                semantic_checker = get_semantic_checker()
+                semantic_errors = semantic_checker.check_sentence(sentence)
+                for error in semantic_errors:
+                    error['position']['start'] += sent_start
+                    error['position']['end'] += sent_start
+                    error['sentenceIndex'] = sent_idx
+                    
+                    # Check overlap
+                    sem_start = error['position']['start']
+                    sem_end = error['position']['end']
+                    overlaps = False
+                    for existing in sentence_errors:
+                        exist_start = existing['position']['start']
+                        exist_end = existing['position']['end']
+                        if not (sem_end <= exist_start or sem_start >= exist_end):
+                            overlaps = True
+                            break
+                    if not overlaps:
+                        sentence_errors.append(error)
+            except Exception:
+                pass  # Skip semantic check on error
+            
+            # Check POS structure (unusual grammar patterns)
+            try:
+                pos_model = get_pos_ngram_model()
+                structure_errors = pos_model.check_sentence(sentence)
+                for error in structure_errors:
+                    error['position']['start'] += sent_start
+                    error['position']['end'] += sent_start
+                    error['sentenceIndex'] = sent_idx
+                    
+                    # Only add if no other errors at this position
+                    pos_start = error['position']['start']
+                    pos_end = error['position']['end']
+                    overlaps = False
+                    for existing in sentence_errors:
+                        exist_start = existing['position']['start']
+                        exist_end = existing['position']['end']
+                        if not (pos_end <= exist_start or pos_start >= exist_end):
+                            overlaps = True
+                            break
+                    if not overlaps:
+                        sentence_errors.append(error)
+            except Exception:
+                pass  # Skip POS check on error
         
         # Remove duplicate errors (same position)
         seen_positions = set()
