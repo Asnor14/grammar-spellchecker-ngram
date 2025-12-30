@@ -139,6 +139,28 @@ class GrammarRulesChecker:
         'prepare': ('prepared', 'prepared', 'prepares', 'preparing'),
         'receive': ('received', 'received', 'receives', 'receiving'),
         'suppose': ('supposed', 'supposed', 'supposes', 'supposing'),
+        # Daily Life & Study verbs
+        'stay': ('stayed', 'stayed', 'stays', 'staying'),
+        'plan': ('planned', 'planned', 'plans', 'planning'),
+        'study': ('studied', 'studied', 'studies', 'studying'),
+        'learn': ('learned', 'learned', 'learns', 'learning'),
+        'listen': ('listened', 'listened', 'listens', 'listening'),
+        'understand': ('understood', 'understood', 'understands', 'understanding'),
+        'remember': ('remembered', 'remembered', 'remembers', 'remembering'),
+        'wait': ('waited', 'waited', 'waits', 'waiting'),
+        'visit': ('visited', 'visited', 'visits', 'visiting'),
+        'travel': ('traveled', 'traveled', 'travels', 'traveling'),
+        'worry': ('worried', 'worried', 'worries', 'worrying'),
+        'clean': ('cleaned', 'cleaned', 'cleans', 'cleaning'),
+        'cook': ('cooked', 'cooked', 'cooks', 'cooking'),
+        'wash': ('washed', 'washed', 'washes', 'washing'),
+        'fix': ('fixed', 'fixed', 'fixes', 'fixing'),
+        'rain': ('rained', 'rained', 'rains', 'raining'),
+        'snow': ('snowed', 'snowed', 'snows', 'snowing'),
+        'relax': ('relaxed', 'relaxed', 'relaxes', 'relaxing'),
+        'exercise': ('exercised', 'exercised', 'exercises', 'exercising'),
+        'practice': ('practiced', 'practiced', 'practices', 'practicing'),
+        'improve': ('improved', 'improved', 'improves', 'improving'),
     }
     
     # Singular subjects that require singular verbs
@@ -148,6 +170,12 @@ class GrammarRulesChecker:
         'either', 'neither', 'one', 'battery', 'phone', 'brother', 'sister',
         'mother', 'father', 'car', 'computer', 'person', 'man', 'woman',
         'child', 'boy', 'girl', 'friend', 'teacher', 'student', 'dog', 'cat',
+        # Uncountable nouns (always singular)
+        'weather', 'news', 'traffic', 'information', 'advice', 'homework',
+        'knowledge', 'furniture', 'equipment', 'luggage', 'baggage', 'money',
+        'music', 'art', 'water', 'food', 'sugar', 'rice', 'evidence',
+        'progress', 'research', 'work', 'time', 'air', 'health', 'love',
+        'software', 'hardware', 'data', 'mathematics', 'physics', 'economics',
     }
     
     # Plural subjects that require plural verbs
@@ -272,6 +300,9 @@ class GrammarRulesChecker:
         
         # Check prepositions with context (bring at home, angry to me)
         errors.extend(self._check_prepositions_context(text, words))
+        
+        # Check possessives with family/relation words (my brother car -> my brother's car)
+        errors.extend(self._check_possessives_context(text, words))
         
         return errors
     
@@ -455,6 +486,25 @@ class GrammarRulesChecker:
         
         # Check for subject + base verb with past context
         for i, (word, start, end) in enumerate(words):
+            # FIX: FIRST WORD CHECK - Don't skip first word if past context
+            if i == 0 and has_past_context:
+                # Check if first word is a base verb that needs past tense
+                if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had', 'do', 'does', 'did'}:
+                    forms = self.VERB_FORMS[word]
+                    past_form = forms[0]
+                    
+                    # Only flag if word is base form (key in dict) and not already past
+                    if word != past_form:
+                        errors.append({
+                            'type': 'grammar',
+                            'position': {'start': start, 'end': end},
+                            'original': text[start:end],
+                            'suggestion': past_form.capitalize() if start == 0 else past_form,
+                            'explanation': f'Use past tense "{past_form}" because of past context.',
+                            'sentenceIndex': 0,
+                        })
+                continue  # Move to next word after handling first word
+            
             if i > 0:
                 prev_word = words[i - 1][0]
                 
@@ -471,6 +521,24 @@ class GrammarRulesChecker:
                     if word in self.VERB_FORMS and word not in {'be', 'is', 'are', 'was', 'were', 'have', 'has', 'had'}:
                         forms = self.VERB_FORMS[word]
                         past_form = forms[0]  # past tense
+                        
+                        # INFINITIVE PROTECTION: Skip if verb is part of infinitive
+                        # Check if prev_word is "to"
+                        if prev_word == 'to':
+                            continue
+                        
+                        # Check for modals before verb
+                        modals = {'can', 'could', 'should', 'would', 'will', 'may', 'might', 'must'}
+                        if prev_word in modals:
+                            continue
+                        
+                        # Check for parallel infinitive: "to eat and drink"
+                        # If prev_word is 'and'/'or' and words[i-2] is verb after 'to'
+                        if prev_word in {'and', 'or'} and i > 2:
+                            two_back = words[i - 2][0]
+                            three_back = words[i - 3][0] if i > 3 else ''
+                            if three_back == 'to' or two_back in modals:
+                                continue
                         
                         # Only flag if: current word is base form AND subject precedes it
                         if actual_subject in all_subjects and word != past_form:
@@ -1344,6 +1412,17 @@ class GrammarRulesChecker:
             'inferior than': ('inferior to', 'Use "inferior to".'),
             'consist in': ('consist of', 'Use "consist of".'),
             'die from': ('die of', 'Usually "die of" for diseases.'),
+            # NEW PATTERNS
+            'depend of': ('depend on', 'Use "depend on".'),
+            'arrive to': ('arrive at', 'Use "arrive at" (place) or "arrive in" (city/country).'),
+            'listen her': ('listen to her', 'Use "listen to" before a person.'),
+            'listening her': ('listening to her', 'Use "listening to".'),
+            'listen him': ('listen to him', 'Use "listen to" before a person.'),
+            'listening him': ('listening to him', 'Use "listening to".'),
+            'listen me': ('listen to me', 'Use "listen to" before a person.'),
+            'listening me': ('listening to me', 'Use "listening to".'),
+            'explain me': ('explain to me', 'Use "explain to" before a person.'),
+            'describe me': ('describe to me', 'Use "describe to" before a person.'),
         }
         
         text_lower = text.lower()
@@ -1579,6 +1658,61 @@ class GrammarRulesChecker:
                 'explanation': 'Use "interested in", not "interested for".',
                 'sentenceIndex': 0,
             })
+        
+        return errors
+    
+    def _check_possessives_context(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """
+        Check for missing apostrophe-s with family and relationship words.
+        Example: "my brother car" -> "my brother's car"
+        """
+        errors = []
+        
+        # Trigger words: family and relationship terms
+        family_triggers = {
+            'mother', 'father', 'brother', 'sister', 'aunt', 'uncle',
+            'cousin', 'neighbor', 'friend', 'boss', 'teacher', 'student',
+            'son', 'daughter', 'husband', 'wife', 'parent', 'grandma',
+            'grandpa', 'grandmother', 'grandfather', 'colleague', 'partner'
+        }
+        
+        # Common nouns that often follow possessives
+        possessive_objects = {
+            'car', 'house', 'phone', 'book', 'bag', 'room', 'desk', 'computer',
+            'job', 'work', 'office', 'idea', 'opinion', 'decision', 'advice',
+            'name', 'birthday', 'wedding', 'home', 'apartment', 'money',
+            'wallet', 'keys', 'friend', 'problem', 'fault', 'mistake'
+        }
+        
+        for i, (word, start, end) in enumerate(words):
+            word_lower = word.lower()
+            
+            # Check if this is a family/relation word
+            if word_lower in family_triggers and not word_lower.endswith("'s"):
+                # Check if next word is a noun (not a verb or preposition)
+                if i + 1 < len(words):
+                    next_word, next_start, next_end = words[i + 1]
+                    next_lower = next_word.lower()
+                    
+                    # Skip if next word is a verb or preposition
+                    skip_words = {'is', 'are', 'was', 'were', 'has', 'have', 'had',
+                                 'will', 'would', 'can', 'could', 'should', 'may',
+                                 'said', 'says', 'told', 'tells', 'went', 'goes',
+                                 'in', 'on', 'at', 'to', 'for', 'with', 'and', 'or'}
+                    
+                    if next_lower not in skip_words:
+                        # Check if next word is in common possessive objects
+                        # OR is a noun-like word (not ending in common verb suffixes)
+                        if next_lower in possessive_objects:
+                            suggestion = word + "'s"
+                            errors.append({
+                                'type': 'grammar',
+                                'position': {'start': start, 'end': end},
+                                'original': text[start:end],
+                                'suggestion': suggestion,
+                                'explanation': f'Use possessive "{suggestion}" before a noun.',
+                                'sentenceIndex': 0,
+                            })
         
         return errors
 

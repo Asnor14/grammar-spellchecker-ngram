@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import grammar, file_upload
 from app.models.ngram_model import initialize_model, get_model
 from app.models.spell_checker import initialize_spell_checker
+from app.models.pos_ngram_model import get_pos_ngram_model
+from app.models.semantic_checker import get_semantic_checker
 
 
 @asynccontextmanager
@@ -37,6 +39,13 @@ async def lifespan(app: FastAPI):
     #     get_transformer_checker()
     # except Exception as e:
     #     print(f"Failed to initialize Transformer: {e}")
+    
+    # Pre-load advanced models to prevent lag on first request
+    print("Initializing POS N-gram model...")
+    get_pos_ngram_model()
+    
+    print("Initializing Semantic Checker...")
+    get_semantic_checker()
     
     print(f"Models loaded successfully!")
     print(f"Vocabulary size: {len(model.vocabulary):,} words")
