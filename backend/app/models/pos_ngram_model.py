@@ -124,7 +124,7 @@ class POSNGramModel:
         
         try:
             # Load sentences from selected categories
-            categories = ['news', 'editorial', 'reviews', 'government']
+            categories = ['news', 'editorial', 'reviews', 'government', 'hobbies']
             formatted_sentences = []
             
             for category in categories:
@@ -139,8 +139,8 @@ class POSNGramModel:
             if not formatted_sentences:
                 return False
             
-            # Limit to reasonable training size for performance
-            max_sentences = 5000
+            # Use up to 15,000 sentences for robust training
+            max_sentences = 15000
             if len(formatted_sentences) > max_sentences:
                 formatted_sentences = formatted_sentences[:max_sentences]
             
