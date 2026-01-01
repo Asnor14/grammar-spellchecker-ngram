@@ -1,5 +1,6 @@
 """
 Grammar API endpoint.
+Integrated N-gram model for probability-based error detection.
 """
 import time
 from typing import List, Dict, Optional
@@ -13,13 +14,12 @@ from app.models.grammar_rules import get_grammar_rules_checker
 from app.models.semantic_checker import get_semantic_checker
 from app.models.pos_ngram_model import get_pos_ngram_model
 from app.utils.sentence_splitter import split_sentences_with_positions
-from app.utils.tokenizer import tokenize
+from app.utils.tokenizer import tokenize, get_word_tokens_with_positions
 
 router = APIRouter()
 
 class CheckTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=50000)
-    # Updated Regex to allow '4gram'
     ngram: str = Field("trigram", pattern="^(bigram|trigram|4gram)$") 
 
 class ErrorPosition(BaseModel):
@@ -57,7 +57,6 @@ def apply_corrections(text: str, errors: List[Dict]) -> str:
     modified = []
     for error in sorted_errors:
         s, e, sugg = error['position']['start'], error['position']['end'], error['suggestion']
-        # Overlap check
         if any(not (e <= ms or s >= me) for ms, me in modified): continue
         result = result[:s] + sugg + result[e:]
         modified.append((s, e))
@@ -70,11 +69,112 @@ def limit_corrections(errors: List[Dict], word_count: int) -> List[Dict]:
     
     if word_count < 5: return other + punct
     
-    limit = max(1, int(word_count * 0.6)) # Slightly relaxed limit for better accuracy
-    priority = {'spelling': 0, 'grammar': 1, 'semantic': 2, 'structure': 3}
-    other.sort(key=lambda x: priority.get(x['type'], 4))
+    limit = max(1, int(word_count * 0.6))
+    priority = {'spelling': 0, 'grammar': 1, 'ngram': 2, 'semantic': 3, 'structure': 4}
+    other.sort(key=lambda x: priority.get(x['type'], 5))
     
     return other[:limit] + punct
+
+
+def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: float = 0.0001) -> List[Dict]:
+    """
+    Detect unusual word sequences using N-gram probability analysis.
+    
+    Args:
+        sentence: The sentence to analyze
+        ngram_order: 2 (bigram), 3 (trigram), or 4 (4-gram)
+        probability_threshold: Flag words below this probability
+        
+    Returns:
+        List of error dictionaries
+    """
+    errors = []
+    model = get_model()
+    
+    if not model._trained:
+        return errors
+    
+    # Get tokens with positions
+    tokens = get_word_tokens_with_positions(sentence)
+    if len(tokens) < 2:
+        return errors
+    
+    words = [t[0] for t in tokens]
+    
+    # Skip common function words that shouldn't be flagged
+    skip_words = {
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+        'should', 'may', 'might', 'must', 'can', 'to', 'of', 'in', 'for',
+        'on', 'with', 'at', 'by', 'from', 'as', 'or', 'and', 'but', 'if',
+        'that', 'this', 'it', 'i', 'you', 'he', 'she', 'we', 'they', 'my',
+        'your', 'his', 'her', 'our', 'their', 'its', 'not', 'no', 'yes',
+        'so', 'very', 'just', 'also', 'only', 'even', 'now', 'here', 'there'
+    }
+    
+    for i, (word, start, end) in enumerate(tokens):
+        # Skip function words and very short words
+        if word.lower() in skip_words or len(word) < 3:
+            continue
+            
+        # Build context based on ngram_order
+        context_start = max(0, i - (ngram_order - 1))
+        context = words[context_start:i]
+        
+        # Get probability of current word given context
+        prob = model.interpolated_probability(word, context, ngram_order)
+        
+        # If probability is very low, word might be unusual in this context
+        if prob < probability_threshold:
+            # Get better candidates
+            candidates = model.get_word_candidates(word, context, max_candidates=3, order=ngram_order)
+            
+            # Filter: only suggest if top candidate is different AND has higher probability
+            if candidates:
+                top_word, top_prob = candidates[0]
+                
+                # Only flag if:
+                # 1. Top candidate is different from original
+                # 2. Top candidate is significantly more likely (10x better)
+                # 3. Top candidate is in vocabulary
+                if (top_word.lower() != word.lower() and 
+                    top_prob > prob * 10 and 
+                    top_word in model.vocabulary):
+                    
+                    # Preserve original case
+                    original_text = sentence[start:end]
+                    if original_text[0].isupper():
+                        suggestion = top_word.capitalize()
+                    elif original_text.isupper():
+                        suggestion = top_word.upper()
+                    else:
+                        suggestion = top_word
+                    
+                    context_str = ' '.join(context[-2:]) if context else ''
+                    errors.append({
+                        'type': 'ngram',
+                        'position': {'start': start, 'end': end},
+                        'original': original_text,
+                        'suggestion': suggestion,
+                        'explanation': f'Unusual word in context "{context_str} ___". Consider "{suggestion}".',
+                        'sentenceIndex': 0
+                    })
+    
+    return errors
+
+
+def overlaps_with_existing(error: Dict, existing_errors: List[Dict]) -> bool:
+    """Check if error overlaps with any existing error."""
+    e_start = error['position']['start']
+    e_end = error['position']['end']
+    for ex in existing_errors:
+        ex_start = ex['position']['start']
+        ex_end = ex['position']['end']
+        # Check overlap
+        if not (e_end <= ex_start or e_start >= ex_end):
+            return True
+    return False
+
 
 @router.post("/check-text", response_model=AnalysisResult)
 async def check_text(request: CheckTextRequest):
@@ -118,7 +218,7 @@ async def check_text(request: CheckTextRequest):
             e['position']['start'] += start_offset
             e['position']['end'] += start_offset
             e['sentenceIndex'] = idx
-            if not any(not (e['position']['end'] <= x['position']['start'] or e['position']['start'] >= x['position']['end']) for x in sent_errors):
+            if not overlaps_with_existing(e, sent_errors):
                 sent_errors.append(e)
                 
         # Punctuation
@@ -127,7 +227,7 @@ async def check_text(request: CheckTextRequest):
             e['position']['start'] += start_offset
             e['position']['end'] += start_offset
             e['sentenceIndex'] = idx
-            if not any(not (e['position']['end'] <= x['position']['start'] or e['position']['start'] >= x['position']['end']) for x in sent_errors):
+            if not overlaps_with_existing(e, sent_errors):
                 sent_errors.append(e)
 
         # Semantic
@@ -137,7 +237,7 @@ async def check_text(request: CheckTextRequest):
                 e['position']['start'] += start_offset
                 e['position']['end'] += start_offset
                 e['sentenceIndex'] = idx
-                if not any(not (e['position']['end'] <= x['position']['start'] or e['position']['start'] >= x['position']['end']) for x in sent_errors):
+                if not overlaps_with_existing(e, sent_errors):
                     sent_errors.append(e)
         except: pass
 
@@ -148,9 +248,21 @@ async def check_text(request: CheckTextRequest):
                 e['position']['start'] += start_offset
                 e['position']['end'] += start_offset
                 e['sentenceIndex'] = idx
-                if not any(not (e['position']['end'] <= x['position']['start'] or e['position']['start'] >= x['position']['end']) for x in sent_errors):
+                if not overlaps_with_existing(e, sent_errors):
                     sent_errors.append(e)
         except: pass
+        
+        # N-GRAM BASED ERROR DETECTION (NEW!)
+        try:
+            ngram_errors = check_with_ngram(sent, ngram_order)
+            for e in ngram_errors:
+                e['position']['start'] += start_offset
+                e['position']['end'] += start_offset
+                e['sentenceIndex'] = idx
+                if not overlaps_with_existing(e, sent_errors):
+                    sent_errors.append(e)
+        except Exception as ex:
+            pass  # Fail silently to not break the checker
         
         # Deduplicate
         unique = []
@@ -168,7 +280,8 @@ async def check_text(request: CheckTextRequest):
             model = get_model()
             if model._trained:
                 perp = model.perplexity(words, order=ngram_order)
-                fluency = max(0, 100 - perp) # Simplified metric
+                # Scale perplexity to 0-100 fluency score
+                fluency = max(0, min(100, 100 - (perp - 1) * 5))
         except: pass
         
         final_errors = limit_corrections(unique, len(tokenize(sent)))

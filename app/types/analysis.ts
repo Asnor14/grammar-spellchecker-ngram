@@ -1,5 +1,5 @@
 export interface GrammarError {
-  type: 'spelling' | 'grammar' | 'punctuation';
+  type: 'spelling' | 'grammar' | 'punctuation' | 'ngram' | 'semantic' | 'structure';
   position: {
     start: number;
     end: number;
@@ -38,11 +38,14 @@ export interface CheckFileRequest {
   ngram: 'bigram' | 'trigram' | '4gram';
 }
 
-export type ErrorType = 'spelling' | 'grammar' | 'punctuation';
+export type ErrorType = 'spelling' | 'grammar' | 'punctuation' | 'ngram' | 'semantic' | 'structure';
 
 export interface ErrorStats {
   spelling: number;
   grammar: number;
   punctuation: number;
+  ngram: number;
+  semantic: number;
+  structure: number;
   total: number;
 }
