@@ -76,14 +76,15 @@ def limit_corrections(errors: List[Dict], word_count: int) -> List[Dict]:
     return other[:limit] + punct
 
 
-def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: float = 0.0001) -> List[Dict]:
+def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: float = 0.005) -> List[Dict]:
     """
     Detect unusual word sequences using N-gram probability analysis.
+    AGGRESSIVE MODE: Loosened thresholds for testing.
     
     Args:
         sentence: The sentence to analyze
         ngram_order: 2 (bigram), 3 (trigram), or 4 (4-gram)
-        probability_threshold: Flag words below this probability
+        probability_threshold: Flag words below this probability (default: 0.005 for testing)
         
     Returns:
         List of error dictionaries
@@ -91,12 +92,17 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
     errors = []
     model = get_model()
     
+    # DIAGNOSTIC: Log model status
+    print(f"[N-GRAM DEBUG] Model trained status: {model._trained}, Vocab size: {len(model.vocabulary)}")
+    
     if not model._trained:
+        print("[N-GRAM WARNING] Model is NOT trained! Returning empty errors.")
         return errors
     
     # Get tokens with positions
     tokens = get_word_tokens_with_positions(sentence)
     if len(tokens) < 2:
+        print(f"[N-GRAM DEBUG] Too few tokens ({len(tokens)}), skipping.")
         return errors
     
     words = [t[0] for t in tokens]
@@ -124,7 +130,11 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
         # Get probability of current word given context
         prob = model.interpolated_probability(word, context, ngram_order)
         
-        # If probability is very low, word might be unusual in this context
+        # DIAGNOSTIC: Log probabilities for all content words
+        if prob < 0.01:
+            print(f"[N-GRAM DEBUG] Word '{word}' | Context: {context} | Prob: {prob:.6f} | Threshold: {probability_threshold}")
+        
+        # If probability is low, word might be unusual in this context
         if prob < probability_threshold:
             # Get better candidates
             candidates = model.get_word_candidates(word, context, max_candidates=3, order=ngram_order)
@@ -133,13 +143,14 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
             if candidates:
                 top_word, top_prob = candidates[0]
                 
-                # Only flag if:
+                # AGGRESSIVE SETTINGS FOR TESTING:
                 # 1. Top candidate is different from original
-                # 2. Top candidate is significantly more likely (10x better)
+                # 2. Top candidate is at least 2x more likely (was 10x)
                 # 3. Top candidate is in vocabulary
                 if (top_word.lower() != word.lower() and 
-                    top_prob > prob * 10 and 
+                    top_prob > prob * 2 and 
                     top_word in model.vocabulary):
+                    print(f"[N-GRAM FOUND] '{word}' -> '{top_word}' (prob {prob:.6f} -> {top_prob:.6f})")
                     
                     # Preserve original case
                     original_text = sentence[start:end]
@@ -252,17 +263,15 @@ async def check_text(request: CheckTextRequest):
                     sent_errors.append(e)
         except: pass
         
-        # N-GRAM BASED ERROR DETECTION (NEW!)
-        try:
-            ngram_errors = check_with_ngram(sent, ngram_order)
-            for e in ngram_errors:
-                e['position']['start'] += start_offset
-                e['position']['end'] += start_offset
-                e['sentenceIndex'] = idx
-                if not overlaps_with_existing(e, sent_errors):
-                    sent_errors.append(e)
-        except Exception as ex:
-            pass  # Fail silently to not break the checker
+        # N-GRAM BASED ERROR DETECTION (LOUD - No silent failures!)
+        ngram_errors = check_with_ngram(sent, ngram_order)
+        for e in ngram_errors:
+            e['position']['start'] += start_offset
+            e['position']['end'] += start_offset
+            e['sentenceIndex'] = idx
+            if not overlaps_with_existing(e, sent_errors):
+                sent_errors.append(e)
+        print(f"[N-GRAM RESULT] Sentence {idx}: Found {len(ngram_errors)} n-gram errors")
         
         # Deduplicate
         unique = []
