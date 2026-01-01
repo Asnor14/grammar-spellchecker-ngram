@@ -94,7 +94,7 @@ export default function ResultPage() {
         <div className="min-h-screen bg-[var(--color-bg-900)]">
             {/* Header */}
             <header className="border-b border-[var(--color-bg-700)]">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                         <div className="flex items-center gap-4">
                             <button
@@ -109,7 +109,7 @@ export default function ResultPage() {
                                     Analysis Results
                                 </h1>
                                 <p className="text-sm text-[var(--color-text-300)]">
-                                    {result.ngramMode === 'trigram' ? 'Trigram' : 'Bigram'} analysis •
+                                    {result.ngramMode === '4gram' ? '4-Gram' : result.ngramMode === 'trigram' ? 'Trigram' : 'Bigram'} analysis •
                                     {result.processingTimeMs ? ` ${result.processingTimeMs}ms` : ' Complete'}
                                 </p>
                             </div>
@@ -139,7 +139,7 @@ export default function ResultPage() {
             </header>
 
             {/* Main Content */}
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Left Column - Main Content */}
                     <div className="lg:col-span-2 space-y-6">
@@ -212,7 +212,7 @@ export default function ResultPage() {
                                 <div className="flex justify-between">
                                     <span className="text-[var(--color-text-300)]">Model</span>
                                     <span className="text-[var(--color-text-100)] font-medium">
-                                        {result.ngramMode === 'trigram' ? 'Trigram (3-gram)' : 'Bigram (2-gram)'}
+                                        {result.ngramMode === '4gram' ? '4-Gram (4-gram)' : result.ngramMode === 'trigram' ? 'Trigram (3-gram)' : 'Bigram (2-gram)'}
                                     </span>
                                 </div>
                                 <div className="flex justify-between">

@@ -14,7 +14,7 @@ import { AnalysisResult } from '@/app/types/analysis';
 export default function Home() {
   const router = useRouter();
   const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
-  const [ngramMode, setNgramMode] = useState<'bigram' | 'trigram'>('trigram');
+  const [ngramMode, setNgramMode] = useState<'bigram' | 'trigram' | '4gram'>('trigram');
   const [text, setText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);

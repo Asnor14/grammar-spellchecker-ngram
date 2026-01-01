@@ -3,8 +3,8 @@
 import Icon from './Icon';
 
 interface ModeToggleProps {
-    mode: 'bigram' | 'trigram';
-    onChange: (mode: 'bigram' | 'trigram') => void;
+    mode: 'bigram' | 'trigram' | '4gram';
+    onChange: (mode: 'bigram' | 'trigram' | '4gram') => void;
     disabled?: boolean;
 }
 
@@ -37,6 +37,15 @@ export default function ModeToggle({
                 >
                     <Icon name="trigram" size={16} />
                     <span>Trigram</span>
+                </button>
+                <button
+                    onClick={() => onChange('4gram')}
+                    disabled={disabled}
+                    className={`toggle-option flex items-center gap-2 ${mode === '4gram' ? 'active' : ''}`}
+                    title="4-gram model (4-word context) - Highest accuracy"
+                >
+                    <Icon name="trigram" size={16} />
+                    <span>4-Gram</span>
                 </button>
             </div>
         </div>

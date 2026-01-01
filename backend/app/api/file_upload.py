@@ -34,10 +34,10 @@ async def check_file(
         AnalysisResult with errors and corrections
     """
     # Validate ngram parameter
-    if ngram not in ["bigram", "trigram"]:
+    if ngram not in ["bigram", "trigram", "4gram"]:
         raise HTTPException(
             status_code=400,
-            detail="Invalid ngram mode. Must be 'bigram' or 'trigram'."
+            detail="Invalid ngram mode. Must be 'bigram', 'trigram', or '4gram'."
         )
     
     # Validate filename
