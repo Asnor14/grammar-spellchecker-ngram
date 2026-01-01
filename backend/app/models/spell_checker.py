@@ -31,6 +31,7 @@ class SpellChecker:
             'time', 'year', 'people', 'way', 'day', 'man', 'woman', 'child',
             'school', 'student', 'teacher', 'class', 'group', 'college',
             'problem', 'issue', 'result', 'service', 'site', 'web',
+            'coffee', 'water', 'food', 'money', 'email', 'message', 'letter',
             # Verbs (Expanded)
             'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am',
             'have', 'has', 'had', 'having',
@@ -115,6 +116,7 @@ class SpellChecker:
             'serve', 'serves', 'served', 'serving',
             'die', 'dies', 'died', 'dying',
             'send', 'sends', 'sent', 'sending',
+            'receive', 'receives', 'received', 'receiving',
             'expect', 'expects', 'expected', 'expecting',
             'build', 'builds', 'built', 'building',
             'stay', 'stays', 'stayed', 'staying',

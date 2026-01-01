@@ -211,12 +211,29 @@ async def check_text(request: CheckTextRequest):
             print("[API] Transformer failed. Falling back to N-gram mode...")
             request.model_type = "ngram"  # Fall through to N-gram processing
         else:
+            # Also run spell checker - Transformer is grammar-focused, spell checker catches spelling
+            spell_checker = get_spell_checker()
+            spell_errors = spell_checker.check_text(text)
+            print(f"[TRANSFORMER+SPELL] Found {len(spell_errors)} spelling errors")
+            
             # Format errors for response
             all_errors = []
-            for idx, e in enumerate(transformer_errors):
-                e['sentenceIndex'] = 0  # Transformer processes as single text
-                e['type'] = 'ai'  # Mark as AI-generated error
+            
+            # Add transformer errors
+            for e in transformer_errors:
+                e['sentenceIndex'] = 0
+                e['type'] = 'ai'
                 all_errors.append(e)
+            
+            # Add spell errors (avoid duplicates by position)
+            for e in spell_errors:
+                e['sentenceIndex'] = 0
+                # Check if position overlaps with transformer errors
+                if not overlaps_with_existing(e, all_errors):
+                    all_errors.append(e)
+            
+            # Apply all corrections
+            corrected_text = apply_corrections(text, all_errors)
             
             # Create a single sentence analysis for transformer mode
             analyses = [SentenceAnalysis(
