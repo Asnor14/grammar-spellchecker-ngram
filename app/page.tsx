@@ -6,6 +6,7 @@ import TextInput from './components/TextInput';
 import FileUpload from './components/FileUpload';
 import InputModeToggle from './components/InputModeToggle';
 import ModeToggle from './components/ModeToggle';
+import ModelTypeToggle from './components/ModelTypeToggle';
 import Loading from './components/Loading';
 import Icon from './components/Icon';
 import { checkText, checkFile } from '@/app/lib/api';
@@ -15,6 +16,7 @@ export default function Home() {
   const router = useRouter();
   const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
   const [ngramMode, setNgramMode] = useState<'bigram' | 'trigram' | '4gram'>('trigram');
+  const [modelType, setModelType] = useState<'ngram' | 'transformer'>('ngram');
   const [text, setText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -47,9 +49,9 @@ export default function Home() {
       let result: AnalysisResult;
 
       if (inputMode === 'text') {
-        result = await checkText(text, ngramMode);
+        result = await checkText(text, ngramMode, modelType);
       } else if (selectedFile) {
-        result = await checkFile(selectedFile, ngramMode);
+        result = await checkFile(selectedFile, ngramMode, modelType);
       } else {
         throw new Error('No input provided');
       }
@@ -95,17 +97,28 @@ export default function Home() {
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="space-y-6">
           {/* Controls Row */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <InputModeToggle
-              mode={inputMode}
-              onChange={setInputMode}
-              disabled={isLoading}
-            />
-            <ModeToggle
-              mode={ngramMode}
-              onChange={setNgramMode}
-              disabled={isLoading}
-            />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <InputModeToggle
+                mode={inputMode}
+                onChange={setInputMode}
+                disabled={isLoading}
+              />
+              <ModelTypeToggle
+                modelType={modelType}
+                onChange={setModelType}
+                disabled={isLoading}
+              />
+            </div>
+            {modelType === 'ngram' && (
+              <div className="flex justify-end">
+                <ModeToggle
+                  mode={ngramMode}
+                  onChange={setNgramMode}
+                  disabled={isLoading}
+                />
+              </div>
+            )}
           </div>
 
           {/* Input Area */}

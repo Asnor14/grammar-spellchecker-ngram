@@ -1,6 +1,6 @@
 """
 Grammar API endpoint.
-Integrated N-gram model for probability-based error detection.
+Supports Basic (N-gram) and Advanced (Transformer/AI) model modes.
 """
 import time
 from typing import List, Dict, Optional
@@ -13,6 +13,7 @@ from app.models.punctuation_checker import get_punctuation_checker
 from app.models.grammar_rules import get_grammar_rules_checker
 from app.models.semantic_checker import get_semantic_checker
 from app.models.pos_ngram_model import get_pos_ngram_model
+from app.models.transformer_model import get_transformer_checker
 from app.utils.sentence_splitter import split_sentences_with_positions
 from app.utils.tokenizer import tokenize, get_word_tokens_with_positions
 
@@ -20,7 +21,8 @@ router = APIRouter()
 
 class CheckTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=50000)
-    ngram: str = Field("trigram", pattern="^(bigram|trigram|4gram)$") 
+    ngram: str = Field("trigram", pattern="^(bigram|trigram|4gram)$")
+    model_type: str = Field("ngram", pattern="^(ngram|transformer)$")
 
 class ErrorPosition(BaseModel):
     start: int
@@ -47,7 +49,7 @@ class AnalysisResult(BaseModel):
     errors: List[GrammarError]
     confidenceScore: float
     sentences: List[SentenceAnalysis]
-    ngramMode: str
+    ngramMode: str  # Will show "Transformer-AI" when in transformer mode
     processingTimeMs: int
 
 def apply_corrections(text: str, errors: List[Dict]) -> str:
@@ -70,8 +72,8 @@ def limit_corrections(errors: List[Dict], word_count: int) -> List[Dict]:
     if word_count < 5: return other + punct
     
     limit = max(1, int(word_count * 0.6))
-    priority = {'spelling': 0, 'grammar': 1, 'ngram': 2, 'semantic': 3, 'structure': 4}
-    other.sort(key=lambda x: priority.get(x['type'], 5))
+    priority = {'spelling': 0, 'grammar': 1, 'ngram': 2, 'semantic': 3, 'structure': 4, 'ai': 5}
+    other.sort(key=lambda x: priority.get(x['type'], 6))
     
     return other[:limit] + punct
 
@@ -80,26 +82,16 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
     """
     Detect unusual word sequences using N-gram probability analysis.
     AGGRESSIVE MODE: Loosened thresholds for testing.
-    
-    Args:
-        sentence: The sentence to analyze
-        ngram_order: 2 (bigram), 3 (trigram), or 4 (4-gram)
-        probability_threshold: Flag words below this probability (default: 0.005 for testing)
-        
-    Returns:
-        List of error dictionaries
     """
     errors = []
     model = get_model()
     
-    # DIAGNOSTIC: Log model status
     print(f"[N-GRAM DEBUG] Model trained status: {model._trained}, Vocab size: {len(model.vocabulary)}")
     
     if not model._trained:
         print("[N-GRAM WARNING] Model is NOT trained! Returning empty errors.")
         return errors
     
-    # Get tokens with positions
     tokens = get_word_tokens_with_positions(sentence)
     if len(tokens) < 2:
         print(f"[N-GRAM DEBUG] Too few tokens ({len(tokens)}), skipping.")
@@ -107,7 +99,6 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
     
     words = [t[0] for t in tokens]
     
-    # Skip common function words that shouldn't be flagged
     skip_words = {
         'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
         'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
@@ -119,40 +110,28 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
     }
     
     for i, (word, start, end) in enumerate(tokens):
-        # Skip function words and very short words
         if word.lower() in skip_words or len(word) < 3:
             continue
             
-        # Build context based on ngram_order
         context_start = max(0, i - (ngram_order - 1))
         context = words[context_start:i]
         
-        # Get probability of current word given context
         prob = model.interpolated_probability(word, context, ngram_order)
         
-        # DIAGNOSTIC: Log probabilities for all content words
         if prob < 0.01:
             print(f"[N-GRAM DEBUG] Word '{word}' | Context: {context} | Prob: {prob:.6f} | Threshold: {probability_threshold}")
         
-        # If probability is low, word might be unusual in this context
         if prob < probability_threshold:
-            # Get better candidates
             candidates = model.get_word_candidates(word, context, max_candidates=3, order=ngram_order)
             
-            # Filter: only suggest if top candidate is different AND has higher probability
             if candidates:
                 top_word, top_prob = candidates[0]
                 
-                # AGGRESSIVE SETTINGS FOR TESTING:
-                # 1. Top candidate is different from original
-                # 2. Top candidate is at least 2x more likely (was 10x)
-                # 3. Top candidate is in vocabulary
                 if (top_word.lower() != word.lower() and 
                     top_prob > prob * 2 and 
                     top_word in model.vocabulary):
                     print(f"[N-GRAM FOUND] '{word}' -> '{top_word}' (prob {prob:.6f} -> {top_prob:.6f})")
                     
-                    # Preserve original case
                     original_text = sentence[start:end]
                     if original_text[0].isupper():
                         suggestion = top_word.capitalize()
@@ -181,10 +160,36 @@ def overlaps_with_existing(error: Dict, existing_errors: List[Dict]) -> bool:
     for ex in existing_errors:
         ex_start = ex['position']['start']
         ex_end = ex['position']['end']
-        # Check overlap
         if not (e_end <= ex_start or e_start >= ex_end):
             return True
     return False
+
+
+def check_with_transformer(text: str) -> tuple[List[Dict], str, bool]:
+    """
+    Use the Transformer model (T5) to check text.
+    Returns: (errors, corrected_text, success)
+    """
+    print("[TRANSFORMER] Starting AI-powered grammar check...")
+    
+    try:
+        checker = get_transformer_checker()
+        
+        if not checker.pipe:
+            print("[TRANSFORMER] Model not initialized. Falling back to N-gram.")
+            return [], text, False
+        
+        errors = checker.check_text(text)
+        
+        # Apply corrections to get corrected text
+        corrected = apply_corrections(text, errors)
+        
+        print(f"[TRANSFORMER] Found {len(errors)} AI-detected errors")
+        return errors, corrected, True
+        
+    except Exception as e:
+        print(f"[TRANSFORMER ERROR] {e}")
+        return [], text, False
 
 
 @router.post("/check-text", response_model=AnalysisResult)
@@ -193,7 +198,50 @@ async def check_text(request: CheckTextRequest):
     text = request.text.strip()
     if not text: raise HTTPException(status_code=400, detail="Empty text")
     
-    # Determine N-Gram Order
+    # ============================================================
+    # TRANSFORMER MODE (Advanced/AI)
+    # ============================================================
+    if request.model_type == "transformer":
+        print(f"[API] Using TRANSFORMER mode (Advanced AI)")
+        
+        transformer_errors, corrected_text, success = check_with_transformer(text)
+        
+        if not success:
+            # Fallback to N-gram mode if Transformer fails
+            print("[API] Transformer failed. Falling back to N-gram mode...")
+            request.model_type = "ngram"  # Fall through to N-gram processing
+        else:
+            # Format errors for response
+            all_errors = []
+            for idx, e in enumerate(transformer_errors):
+                e['sentenceIndex'] = 0  # Transformer processes as single text
+                e['type'] = 'ai'  # Mark as AI-generated error
+                all_errors.append(e)
+            
+            # Create a single sentence analysis for transformer mode
+            analyses = [SentenceAnalysis(
+                index=0,
+                original=text,
+                corrected=corrected_text,
+                errors=[GrammarError(**e) for e in all_errors],
+                fluencyScore=95.0 if not all_errors else max(50, 95 - len(all_errors) * 5)
+            )]
+            
+            return AnalysisResult(
+                originalText=text,
+                correctedText=corrected_text,
+                errors=[GrammarError(**e) for e in all_errors],
+                confidenceScore=0.95,
+                sentences=analyses,
+                ngramMode="Transformer-AI",
+                processingTimeMs=int((time.time() - start_time) * 1000)
+            )
+    
+    # ============================================================
+    # N-GRAM MODE (Basic/Statistical)
+    # ============================================================
+    print(f"[API] Using N-GRAM mode ({request.ngram})")
+    
     ngram_order = 3
     if request.ngram == "bigram": ngram_order = 2
     elif request.ngram == "4gram": ngram_order = 4
@@ -263,7 +311,7 @@ async def check_text(request: CheckTextRequest):
                     sent_errors.append(e)
         except: pass
         
-        # N-GRAM BASED ERROR DETECTION (LOUD - No silent failures!)
+        # N-GRAM BASED ERROR DETECTION
         ngram_errors = check_with_ngram(sent, ngram_order)
         for e in ngram_errors:
             e['position']['start'] += start_offset
@@ -282,14 +330,13 @@ async def check_text(request: CheckTextRequest):
                 seen.add(k)
                 unique.append(e)
         
-        # Fluency Score (using the specific N-gram order)
+        # Fluency Score
         fluency = 100.0
         try:
             words = tokenize(sent)
             model = get_model()
             if model._trained:
                 perp = model.perplexity(words, order=ngram_order)
-                # Scale perplexity to 0-100 fluency score
                 fluency = max(0, min(100, 100 - (perp - 1) * 5))
         except: pass
         

@@ -22,6 +22,9 @@ import {
     RefreshCw,
     Eye,
     EyeOff,
+    Cpu,
+    Brain,
+    BarChart3,
 } from 'lucide-react';
 
 export type IconName =
@@ -45,7 +48,10 @@ export type IconName =
     | 'download'
     | 'refresh'
     | 'eye'
-    | 'eye-off';
+    | 'eye-off'
+    | 'cpu'
+    | 'brain'
+    | 'bar-chart';
 
 interface IconProps {
     name: IconName;
@@ -78,6 +84,9 @@ const iconMap = {
     'refresh': RefreshCw,
     'eye': Eye,
     'eye-off': EyeOff,
+    'cpu': Cpu,
+    'brain': Brain,
+    'bar-chart': BarChart3,
 };
 
 export default function Icon({

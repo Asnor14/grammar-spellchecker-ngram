@@ -1,6 +1,6 @@
 """
 File upload API endpoint.
-Handles file upload and analysis.
+Handles file upload and analysis with Basic/Advanced model support.
 """
 
 import time
@@ -21,14 +21,16 @@ ALLOWED_EXTENSIONS = {'.txt', '.docx'}
 @router.post("/check-file", response_model=AnalysisResult)
 async def check_file(
     file: UploadFile = File(...),
-    ngram: str = Form("trigram")
+    ngram: str = Form("trigram"),
+    model_type: str = Form("ngram")
 ):
     """
     Upload and analyze a file for grammar, spelling, and punctuation errors.
     
     Args:
         file: Uploaded file (TXT or DOCX)
-        ngram: N-gram model to use ("bigram" or "trigram")
+        ngram: N-gram model to use ("bigram", "trigram", or "4gram")
+        model_type: Model type ("ngram" for Basic, "transformer" for Advanced AI)
         
     Returns:
         AnalysisResult with errors and corrections
@@ -38,6 +40,13 @@ async def check_file(
         raise HTTPException(
             status_code=400,
             detail="Invalid ngram mode. Must be 'bigram', 'trigram', or '4gram'."
+        )
+    
+    # Validate model_type parameter
+    if model_type not in ["ngram", "transformer"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid model_type. Must be 'ngram' or 'transformer'."
         )
     
     # Validate filename
@@ -74,8 +83,8 @@ async def check_file(
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="File appears to be empty or contains no text")
     
-    # Use the existing check_text endpoint logic
-    request = CheckTextRequest(text=text, ngram=ngram)
+    # Use the existing check_text endpoint logic with model_type
+    request = CheckTextRequest(text=text, ngram=ngram, model_type=model_type)
     
     try:
         result = await check_text(request)
