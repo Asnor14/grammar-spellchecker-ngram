@@ -4,10 +4,10 @@ from app.utils.diff_utils import generate_diff
 
 class TransformerGrammarChecker:
     """
-    Grammar checker using a Transformer model (T5).
+    Grammar checker using a Transformer model (CoEdit by Grammarly).
     """
     
-    MODEL_NAME = "vennify/t5-base-grammar-correction"
+    MODEL_NAME = "grammarly/coedit-large"
     
     def __init__(self):
         """Initialize the model and tokenizer."""
@@ -55,12 +55,11 @@ class TransformerGrammarChecker:
         if not text.strip():
             return []
 
-        # T5 usually expects a prefix. Vennify's model is trained with 'grammar: ' prefix usually.
-        input_text = f"grammar: {text}"
+        # CoEdit uses a specific instruction format
+        input_text = f"Fix grammatical errors in this sentence: {text}"
         
         try:
             # Generate correction
-            # max_length should be enough for the sentence
             results = self.pipe(input_text, max_length=512)
             corrected_text = results[0]['generated_text']
             
