@@ -66,6 +66,22 @@ class TransformerGrammarChecker:
             # Post-process to fix common Transformer artifacts
             corrected_text = self._post_process_output(corrected_text, text)
             
+            # ============================================================
+            # SPELL-SAFETY LAYER: Validate output against corpus vocabulary
+            # This catches any spelling artifacts from probabilistic generation
+            # (e.g., "becausee" that slipped through post-processing)
+            # ============================================================
+            from app.models.spell_safety_filter import validate_transformer_output
+            corrected_text = validate_transformer_output(corrected_text)
+            
+            # ============================================================
+            # GRAMMAR-SAFETY LAYER: Validate grammar using n-gram probabilities
+            # This fixes agreement and tense errors by comparing variant
+            # probabilities (e.g., "doesn't" vs "don't" based on context)
+            # ============================================================
+            from app.models.grammar_safety_filter import validate_transformer_grammar
+            corrected_text = validate_transformer_grammar(corrected_text)
+            
             # Basic validation: if corrected text is drastically shorter, something went wrong
             if len(corrected_text) < len(text) * 0.5:
                  print("Warning: Model output dubious (too short). Skipping.")
