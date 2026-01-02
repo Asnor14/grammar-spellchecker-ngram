@@ -63,6 +63,9 @@ class TransformerGrammarChecker:
             results = self.pipe(input_text, max_length=512)
             corrected_text = results[0]['generated_text']
             
+            # Post-process to fix common Transformer artifacts
+            corrected_text = self._post_process_output(corrected_text, text)
+            
             # Basic validation: if corrected text is drastically shorter, something went wrong
             if len(corrected_text) < len(text) * 0.5:
                  print("Warning: Model output dubious (too short). Skipping.")
@@ -78,6 +81,48 @@ class TransformerGrammarChecker:
         except Exception as e:
             print(f"Error during inference: {e}")
             return []
+
+    def _post_process_output(self, corrected: str, original: str) -> str:
+        """
+        Post-process Transformer output to fix common artifacts.
+        """
+        import re
+        
+        # 1. Fix duplicate characters at word endings (becausee -> because)
+        duplicate_fixes = {
+            'becausee': 'because', 'becausse': 'because',
+            'aboutt': 'about', 'withh': 'with',
+            'forr': 'for', 'thee': 'the',
+            'wass': 'was', 'weree': 'were',
+            'hass': 'has', 'hadd': 'had',
+            'didd': 'did', 'doess': 'does',
+            'goess': 'goes', 'sayss': 'says',
+            'gett': 'get', 'putt': 'put',
+            'cutt': 'cut', 'lett': 'let',
+            'sett': 'set', 'runn': 'run',
+        }
+        
+        for wrong, right in duplicate_fixes.items():
+            corrected = re.sub(r'\b' + wrong + r'\b', right, corrected, flags=re.IGNORECASE)
+        
+        # 2. Generic fix: Remove duplicate trailing letters (3+ of same char)
+        corrected = re.sub(r'([a-zA-Z])\1{2,}', r'\1\1', corrected)
+        
+        # 3. Fix double consonants at word end that are usually wrong
+        # Pattern: word ending in double consonant where single is correct
+        corrected = re.sub(r'\b(\w+)([bcdfghjklmnpqrstvwxz])\2\b', 
+                          lambda m: m.group(1) + m.group(2) if m.group(0).lower() not in 
+                          {'ill', 'all', 'bell', 'tell', 'well', 'sell', 'fall', 'call', 'ball', 
+                           'will', 'still', 'full', 'pull', 'miss', 'pass', 'boss', 'less', 
+                           'class', 'grass', 'glass', 'cross', 'press', 'stress', 'dress',
+                           'add', 'odd', 'egg', 'off', 'buff', 'stuff', 'cliff', 'stiff',
+                           'jazz', 'buzz', 'fizz', 'fuzz'} else m.group(0), 
+                          corrected)
+        
+        # 4. Remove consecutive duplicate words
+        corrected = re.sub(r'\b(\w+)\s+\1\b', r'\1', corrected, flags=re.IGNORECASE)
+        
+        return corrected
 
 # Global instance
 _transformer_checker: Optional[TransformerGrammarChecker] = None

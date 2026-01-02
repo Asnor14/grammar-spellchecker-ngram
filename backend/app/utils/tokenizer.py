@@ -7,6 +7,23 @@ import re
 from typing import List, Tuple
 
 
+def normalize_quotes(text: str) -> str:
+    """
+    Normalize all quote variants to standard ASCII quotes.
+    Fixes issues with smart/curly quotes from word processors.
+    """
+    # Smart single quotes to straight apostrophe
+    text = text.replace(''', "'")  # Right single quote
+    text = text.replace(''', "'")  # Left single quote
+    text = text.replace('`', "'")  # Backtick
+    
+    # Smart double quotes to straight quotes
+    text = text.replace('"', '"')  # Left double quote
+    text = text.replace('"', '"')  # Right double quote
+    
+    return text
+
+
 def tokenize(text: str, preserve_case: bool = False) -> List[str]:
     """
     Tokenize text into words, preserving punctuation as separate tokens.
@@ -20,6 +37,9 @@ def tokenize(text: str, preserve_case: bool = False) -> List[str]:
     """
     if not text:
         return []
+    
+    # Normalize smart quotes first
+    text = normalize_quotes(text)
     
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text.strip())
@@ -47,6 +67,9 @@ def tokenize_with_positions(text: str) -> List[Tuple[str, int, int]]:
     """
     if not text:
         return []
+    
+    # Normalize smart quotes first
+    text = normalize_quotes(text)
     
     result = []
     pattern = r"(?:\w+(?:'\w+)?)|[.,!?;:\"]"

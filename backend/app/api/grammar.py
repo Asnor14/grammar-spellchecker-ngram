@@ -21,7 +21,7 @@ router = APIRouter()
 
 class CheckTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=50000)
-    ngram: str = Field("trigram", pattern="^(bigram|trigram|4gram)$")
+    ngram: str = Field("trigram", pattern="^(bigram|trigram|4gram|hybrid)$")
     model_type: str = Field("ngram", pattern="^(ngram|transformer)$")
 
 class ErrorPosition(BaseModel):
@@ -49,7 +49,7 @@ class AnalysisResult(BaseModel):
     errors: List[GrammarError]
     confidenceScore: float
     sentences: List[SentenceAnalysis]
-    ngramMode: str  # Will show "Transformer-AI" when in transformer mode
+    ngramMode: str
     processingTimeMs: int
 
 def apply_corrections(text: str, errors: List[Dict]) -> str:
@@ -78,24 +78,41 @@ def limit_corrections(errors: List[Dict], word_count: int) -> List[Dict]:
     return other[:limit] + punct
 
 
-def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: float = 0.005) -> List[Dict]:
+from app.models.char_ngram_model import get_char_model, initialize_char_model
+from app.models.hybrid_scorer import HybridScorer
+
+_hybrid_scorer = None
+
+def get_initialized_hybrid_scorer():
+    global _hybrid_scorer
+    if _hybrid_scorer:
+        return _hybrid_scorer
+        
+    word_model = get_model()
+    char_model = get_char_model()
+    
+    if not char_model._trained and word_model._trained:
+        print("[HYBRID] Training character N-gram model on vocabulary...")
+        char_model.train(list(word_model.vocabulary))
+        
+    _hybrid_scorer = HybridScorer(word_model, char_model)
+    return _hybrid_scorer
+
+def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: float = 0.005, use_hybrid: bool = False) -> List[Dict]:
     """
-    Detect unusual word sequences using N-gram probability analysis.
-    AGGRESSIVE MODE: Loosened thresholds for testing.
+    Detect unusual word sequences.
+    If use_hybrid is True, uses Character N-gram + Hybrid Scorer.
+    If use_hybrid is False, uses pure Word N-gram probabilities.
     """
     errors = []
     model = get_model()
-    
-    print(f"[N-GRAM DEBUG] Model trained status: {model._trained}, Vocab size: {len(model.vocabulary)}")
+    scorer = get_initialized_hybrid_scorer() if use_hybrid else None
     
     if not model._trained:
-        print("[N-GRAM WARNING] Model is NOT trained! Returning empty errors.")
         return errors
     
     tokens = get_word_tokens_with_positions(sentence)
-    if len(tokens) < 2:
-        print(f"[N-GRAM DEBUG] Too few tokens ({len(tokens)}), skipping.")
-        return errors
+    if len(tokens) < 2: return errors
     
     words = [t[0] for t in tokens]
     
@@ -109,46 +126,106 @@ def check_with_ngram(sentence: str, ngram_order: int, probability_threshold: flo
         'so', 'very', 'just', 'also', 'only', 'even', 'now', 'here', 'there'
     }
     
+    # Protected words - common valid words that should NEVER be changed by N-gram
+    protected_words = {
+        # Weather/Nature
+        'raining', 'rain', 'rained', 'rainy', 'sunny', 'sun', 'snow', 'snowing',
+        # Common verbs often incorrectly changed
+        'wave', 'waved', 'waving', 'waves', 'sings', 'sing', 'sang', 'sung', 'singing',
+        'ate', 'eat', 'eaten', 'eating', 'eats', 'wait', 'waited', 'waiting', 'waits',
+        # Common nouns
+        'game', 'games', 'gaming', 'ice', 'icy', 'fun', 'funny', 'cone', 'cones',
+        # Spelling-related
+        'spelling', 'spell', 'spelled', 'spells', 'fix', 'fixed', 'fixes', 'fixing',
+        # Adjectives/Adverbs
+        'hard', 'harder', 'hardest', 'good', 'well', 'better', 'best',
+        # Time
+        'today', 'yesterday', 'tomorrow',
+        # Structure
+        'structure', 'structured', 'structures', 'flow', 'flows', 'flowing',
+        # Contractions - CRITICAL: never modify these
+        "don't", "doesn't", "didn't", "won't", "can't", "couldn't", "wouldn't",
+        "shouldn't", "isn't", "aren't", "wasn't", "weren't", "hasn't", "haven't",
+        "hadn't", "it's", "that's", "what's", "who's", "there's", "here's",
+        "i'm", "you're", "we're", "they're", "he's", "she's", "let's",
+        "i've", "you've", "we've", "they've", "i'd", "you'd", "he'd", "she'd",
+    }
+    
     for i, (word, start, end) in enumerate(tokens):
         if word.lower() in skip_words or len(word) < 3:
             continue
+        
+        # CRITICAL: Never touch words with apostrophes (contractions)
+        if "'" in word:
+            continue
+            
+        # CRITICAL: Never touch words that are in vocabulary or protected list
+        word_lower = word.lower()
+        if word_lower in model.vocabulary or word_lower in protected_words:
+            continue  # SKIP entirely - don't even check probability
             
         context_start = max(0, i - (ngram_order - 1))
         context = words[context_start:i]
         
         prob = model.interpolated_probability(word, context, ngram_order)
         
-        if prob < 0.01:
-            print(f"[N-GRAM DEBUG] Word '{word}' | Context: {context} | Prob: {prob:.6f} | Threshold: {probability_threshold}")
-        
         if prob < probability_threshold:
-            candidates = model.get_word_candidates(word, context, max_candidates=3, order=ngram_order)
             
-            if candidates:
-                top_word, top_prob = candidates[0]
-                
-                if (top_word.lower() != word.lower() and 
-                    top_prob > prob * 2 and 
-                    top_word in model.vocabulary):
-                    print(f"[N-GRAM FOUND] '{word}' -> '{top_word}' (prob {prob:.6f} -> {top_prob:.6f})")
+            # --- HYBRID MODE ---
+            if use_hybrid and scorer:
+                raw_candidates = model.get_word_candidates(word, context, max_candidates=10, order=ngram_order)
+                candidate_words = [c[0] for c in raw_candidates]
+                if not candidate_words: continue
+
+                best_candidates = scorer.rank_candidates(candidate_words, context, original_word=word)
+                if best_candidates:
+                    top_word = best_candidates[0]
+                    current_score = scorer.score_candidate(word, context, original_word=word)
+                    new_score = scorer.score_candidate(top_word, context, original_word=word)
                     
-                    original_text = sentence[start:end]
-                    if original_text[0].isupper():
-                        suggestion = top_word.capitalize()
-                    elif original_text.isupper():
-                        suggestion = top_word.upper()
-                    else:
-                        suggestion = top_word
+                    if top_word.lower() != word.lower() and new_score > current_score * 1.5:
+                        original_text = sentence[start:end]
+                        if original_text[0].isupper(): suggestion = top_word.capitalize()
+                        elif original_text.isupper(): suggestion = top_word.upper()
+                        else: suggestion = top_word
+                        
+                        errors.append({
+                            'type': 'ngram',
+                            'position': {'start': start, 'end': end},
+                            'original': original_text,
+                            'suggestion': suggestion,
+                            'explanation': f'Context suggests "{suggestion}" fits better (Hybrid Score {new_score:.2f} vs {current_score:.2f}).',
+                            'sentenceIndex': 0
+                        })
+
+            # --- PURE STATISTICAL MODE (Bigram/Trigram) ---
+            # Only triggered for words NOT in vocabulary (already filtered above)
+            # So this is essentially for misspelled words only
+            else:
+                candidates = model.get_word_candidates(word, context, max_candidates=3, order=ngram_order)
+                if candidates:
+                    top_word, top_prob = candidates[0]
                     
-                    context_str = ' '.join(context[-2:]) if context else ''
-                    errors.append({
-                        'type': 'ngram',
-                        'position': {'start': start, 'end': end},
-                        'original': original_text,
-                        'suggestion': suggestion,
-                        'explanation': f'Unusual word in context "{context_str} ___". Consider "{suggestion}".',
-                        'sentenceIndex': 0
-                    })
+                    # Since we already skipped vocab words, this word is a misspelling
+                    # Use a high bar: only suggest if probability is 5x better
+                    if (top_word.lower() != word.lower() and 
+                        top_prob > prob * 5 and
+                        top_word in model.vocabulary):
+                        
+                        original_text = sentence[start:end]
+                        if original_text[0].isupper(): suggestion = top_word.capitalize()
+                        elif original_text.isupper(): suggestion = top_word.upper()
+                        else: suggestion = top_word
+                        
+                        context_str = ' '.join(context[-2:]) if context else ''
+                        errors.append({
+                            'type': 'ngram',
+                            'position': {'start': start, 'end': end},
+                            'original': original_text,
+                            'suggestion': suggestion,
+                            'explanation': f'Statistically unusual word in context "{context_str} ___". Consider "{suggestion}".',
+                            'sentenceIndex': 0
+                        })
     
     return errors
 
@@ -165,7 +242,7 @@ def overlaps_with_existing(error: Dict, existing_errors: List[Dict]) -> bool:
     return False
 
 
-def check_with_transformer(text: str) -> tuple[List[Dict], str, bool]:
+def check_with_transformer(text: str) -> tuple:
     """
     Use the Transformer model (T5) to check text.
     Returns: (errors, corrected_text, success)
@@ -180,8 +257,6 @@ def check_with_transformer(text: str) -> tuple[List[Dict], str, bool]:
             return [], text, False
         
         errors = checker.check_text(text)
-        
-        # Apply corrections to get corrected text
         corrected = apply_corrections(text, errors)
         
         print(f"[TRANSFORMER] Found {len(errors)} AI-detected errors")
@@ -192,10 +267,17 @@ def check_with_transformer(text: str) -> tuple[List[Dict], str, bool]:
         return [], text, False
 
 
+# Import quote normalization for preprocessing
+from app.utils.tokenizer import normalize_quotes as normalize_text_quotes
+
+
 @router.post("/check-text", response_model=AnalysisResult)
 async def check_text(request: CheckTextRequest):
     start_time = time.time()
-    text = request.text.strip()
+    
+    # CRITICAL: Normalize smart quotes BEFORE any processing
+    text = normalize_text_quotes(request.text.strip())
+    
     if not text: raise HTTPException(status_code=400, detail="Empty text")
     
     # ============================================================
@@ -207,35 +289,27 @@ async def check_text(request: CheckTextRequest):
         transformer_errors, corrected_text, success = check_with_transformer(text)
         
         if not success:
-            # Fallback to N-gram mode if Transformer fails
             print("[API] Transformer failed. Falling back to N-gram mode...")
-            request.model_type = "ngram"  # Fall through to N-gram processing
+            request.model_type = "ngram"
         else:
-            # Also run spell checker - Transformer is grammar-focused, spell checker catches spelling
             spell_checker = get_spell_checker()
             spell_errors = spell_checker.check_text(text)
             print(f"[TRANSFORMER+SPELL] Found {len(spell_errors)} spelling errors")
             
-            # Format errors for response
             all_errors = []
             
-            # Add transformer errors
             for e in transformer_errors:
                 e['sentenceIndex'] = 0
                 e['type'] = 'ai'
                 all_errors.append(e)
             
-            # Add spell errors (avoid duplicates by position)
             for e in spell_errors:
                 e['sentenceIndex'] = 0
-                # Check if position overlaps with transformer errors
                 if not overlaps_with_existing(e, all_errors):
                     all_errors.append(e)
             
-            # Apply all corrections
             corrected_text = apply_corrections(text, all_errors)
             
-            # Create a single sentence analysis for transformer mode
             analyses = [SentenceAnalysis(
                 index=0,
                 original=text,
@@ -244,11 +318,18 @@ async def check_text(request: CheckTextRequest):
                 fluencyScore=95.0 if not all_errors else max(50, 95 - len(all_errors) * 5)
             )]
             
+            # Dynamic confidence for Transformer
+            fluency_score = analyses[0].fluencyScore
+            word_count = len(tokenize(text))
+            error_density = len(all_errors) / max(word_count, 1)
+            error_penalty = min(0.2, error_density * 1.5)
+            transformer_confidence = max(0.50, min(0.99, 0.92 * (fluency_score / 100.0) - error_penalty))
+            
             return AnalysisResult(
                 originalText=text,
                 correctedText=corrected_text,
                 errors=[GrammarError(**e) for e in all_errors],
-                confidenceScore=0.95,
+                confidenceScore=round(transformer_confidence, 2),
                 sentences=analyses,
                 ngramMode="Transformer-AI",
                 processingTimeMs=int((time.time() - start_time) * 1000)
@@ -260,20 +341,23 @@ async def check_text(request: CheckTextRequest):
     print(f"[API] Using N-GRAM mode ({request.ngram})")
     
     ngram_order = 3
-    if request.ngram == "bigram": ngram_order = 2
-    elif request.ngram == "4gram": ngram_order = 4
+    use_hybrid = False
+    
+    if request.ngram == "bigram": 
+        ngram_order = 2
+        use_hybrid = False
+    elif request.ngram == "hybrid" or request.ngram == "4gram": 
+        ngram_order = 4
+        use_hybrid = True
     
     spell_checker = get_spell_checker()
     punct_checker = get_punctuation_checker()
     rules_checker = get_grammar_rules_checker()
     
-    # 1. Rules
     rule_errors = rules_checker.check_text(text)
     
-    # 2. Sentences
     sentences = split_sentences_with_positions(text)
     
-    # Map rules to sentences
     for err in rule_errors:
         estart = err['position']['start']
         for idx, (sent, sstart, send) in enumerate(sentences):
@@ -288,7 +372,6 @@ async def check_text(request: CheckTextRequest):
     for idx, (sent, start_offset, end_offset) in enumerate(sentences):
         sent_errors = [e.copy() for e in rule_errors if e.get('sentenceIndex') == idx]
         
-        # Spelling
         spells = spell_checker.check_text(sent)
         for e in spells:
             e['position']['start'] += start_offset
@@ -297,7 +380,6 @@ async def check_text(request: CheckTextRequest):
             if not overlaps_with_existing(e, sent_errors):
                 sent_errors.append(e)
                 
-        # Punctuation
         puncts = punct_checker.check_text(sent)
         for e in puncts:
             e['position']['start'] += start_offset
@@ -306,7 +388,6 @@ async def check_text(request: CheckTextRequest):
             if not overlaps_with_existing(e, sent_errors):
                 sent_errors.append(e)
 
-        # Semantic
         try:
             sem = get_semantic_checker().check_text(sent)
             for e in sem:
@@ -317,7 +398,6 @@ async def check_text(request: CheckTextRequest):
                     sent_errors.append(e)
         except: pass
 
-        # Structure (POS)
         try:
             pos = get_pos_ngram_model().check_sentence(sent)
             for e in pos:
@@ -328,8 +408,7 @@ async def check_text(request: CheckTextRequest):
                     sent_errors.append(e)
         except: pass
         
-        # N-GRAM BASED ERROR DETECTION
-        ngram_errors = check_with_ngram(sent, ngram_order)
+        ngram_errors = check_with_ngram(sent, ngram_order, use_hybrid=use_hybrid)
         for e in ngram_errors:
             e['position']['start'] += start_offset
             e['position']['end'] += start_offset
@@ -338,7 +417,6 @@ async def check_text(request: CheckTextRequest):
                 sent_errors.append(e)
         print(f"[N-GRAM RESULT] Sentence {idx}: Found {len(ngram_errors)} n-gram errors")
         
-        # Deduplicate
         unique = []
         seen = set()
         for e in sent_errors:
@@ -347,7 +425,6 @@ async def check_text(request: CheckTextRequest):
                 seen.add(k)
                 unique.append(e)
         
-        # Fluency Score
         fluency = 100.0
         try:
             words = tokenize(sent)
@@ -371,11 +448,34 @@ async def check_text(request: CheckTextRequest):
         
     final_text = apply_corrections(text, all_errors)
     
+    # Calculate dynamic confidence score based on model and analysis
+    # Base confidence by model type
+    if request.ngram == "bigram":
+        base_confidence = 0.65
+    elif request.ngram == "trigram":
+        base_confidence = 0.75
+    elif request.ngram == "hybrid" or request.ngram == "4gram":
+        base_confidence = 0.85
+    else:
+        base_confidence = 0.70
+    
+    # Factor in average fluency score
+    avg_fluency = sum(a.fluencyScore for a in analyses) / len(analyses) if analyses else 50.0
+    fluency_factor = avg_fluency / 100.0  # 0.0 to 1.0
+    
+    # Factor in error density (fewer errors = higher confidence)
+    word_count = len(tokenize(text))
+    error_density = len(all_errors) / max(word_count, 1)
+    error_penalty = min(0.3, error_density * 2)  # Max 30% penalty
+    
+    # Final confidence: base * fluency factor - error penalty
+    confidence = max(0.10, min(0.99, (base_confidence * 0.6 + fluency_factor * 0.4) - error_penalty))
+    
     return AnalysisResult(
         originalText=text,
         correctedText=final_text,
         errors=[GrammarError(**e) for e in all_errors],
-        confidenceScore=0.9,
+        confidenceScore=round(confidence, 2),
         sentences=analyses,
         ngramMode=request.ngram,
         processingTimeMs=int((time.time() - start_time) * 1000)

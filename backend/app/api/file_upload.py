@@ -7,7 +7,7 @@ import time
 from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
-from app.api.grammar import check_text, CheckTextRequest, AnalysisResult
+from app.api.grammar import CheckTextRequest, AnalysisResult
 from app.utils.file_reader import read_uploaded_file
 
 
@@ -29,17 +29,20 @@ async def check_file(
     
     Args:
         file: Uploaded file (TXT or DOCX)
-        ngram: N-gram model to use ("bigram", "trigram", or "4gram")
+        ngram: N-gram model to use ("bigram", "trigram", "hybrid")
         model_type: Model type ("ngram" for Basic, "transformer" for Advanced AI)
         
     Returns:
         AnalysisResult with errors and corrections
     """
+    # Import here to avoid circular dependency
+    from app.api.grammar import check_text
+
     # Validate ngram parameter
-    if ngram not in ["bigram", "trigram", "4gram"]:
+    if ngram not in ["bigram", "trigram", "hybrid", "4gram"]:
         raise HTTPException(
             status_code=400,
-            detail="Invalid ngram mode. Must be 'bigram', 'trigram', or '4gram'."
+            detail="Invalid ngram mode. Must be 'bigram', 'trigram', or 'hybrid'."
         )
     
     # Validate model_type parameter

@@ -17,6 +17,23 @@ class GrammarRulesChecker:
         'readed': 'read', 'speaked': 'spoke', 'breaked': 'broke', 'wakup': 'woke up',
         'wake': 'woke', 'waked': 'woke', 'phne': 'phone' # Common typos contextually handled
     }
+    
+    # 1b. Missing Apostrophe Contractions
+    CONTRACTION_FIXES = {
+        'dont': "don't", 'doesnt': "doesn't", 'didnt': "didn't",
+        'wont': "won't", 'cant': "can't", 'shouldnt': "shouldn't",
+        'wouldnt': "wouldn't", 'couldnt': "couldn't", 'isnt': "isn't",
+        'arent': "aren't", 'wasnt': "wasn't", 'werent': "weren't",
+        'hasnt': "hasn't", 'havent': "haven't", 'hadnt': "hadn't",
+        'theyre': "they're", 'youre': "you're", 'were': "we're",
+        'ive': "I've", 'youve': "you've", 'weve': "we've",
+        'theyve': "they've", 'hed': "he'd", 'shed': "she'd",
+        'youd': "you'd", 'theyd': "they'd", 'wed': "we'd",
+        'im': "I'm", 'hes': "he's", 'shes': "she's",
+        'thats': "that's", 'whats': "what's", 'whos': "who's",
+        'lets': "let's", 'theres': "there's", 'heres': "here's",
+        'aint': "ain't", 'mustnt': "mustn't", 'mightnt': "mightn't"
+    }
 
     # 2. Strong Past Tense Indicators
     STRONG_PAST_VERBS = {
@@ -173,6 +190,7 @@ class GrammarRulesChecker:
         
         # 3. Apply Checks
         errors.extend(self._check_morphology(text, words, global_past_context))
+        errors.extend(self._check_missing_apostrophes(text, words))
         errors.extend(self._check_quantifiers(text, words))
         errors.extend(self._check_double_comparatives(text, words))
         errors.extend(self._check_explain_errors(text, words))
@@ -218,6 +236,47 @@ class GrammarRulesChecker:
             elif has_past_context and word == 'wake' and word not in {'to', 'will', 'did'}: # Simplified logic
                  errors.append({'type': 'grammar', 'position': {'start': start, 'end': end}, 'original': text[start:end], 'suggestion': 'woke', 'explanation': 'Use past tense "woke".', 'sentenceIndex': 0})
                  
+        return errors
+
+    def _check_missing_apostrophes(self, text: str, words: List[Tuple[str, int, int]]) -> List[Dict]:
+        """Fix contractions missing apostrophes: dont -> don't, its -> it's, etc."""
+        errors = []
+        verbs_after_its = {'is', 'are', 'was', 'were', 'has', 'have', 'had', 'will', 'would', 'could', 'should', 'might', 'been', 'being', 'raining', 'going', 'coming', 'getting', 'looking', 'working', 'making', 'taking', 'doing', 'saying'}
+        
+        for i, (word, start, end) in enumerate(words):
+            word_lower = word.lower()
+            
+            # Special case for "its" - only fix if followed by a verb (it's = it is)
+            if word_lower == 'its':
+                if i + 1 < len(words):
+                    next_word = words[i + 1][0].lower()
+                    if next_word in verbs_after_its:
+                        original = text[start:end]
+                        suggestion = "it's" if original[0].islower() else "It's"
+                        errors.append({
+                            'type': 'grammar', 
+                            'position': {'start': start, 'end': end}, 
+                            'original': original, 
+                            'suggestion': suggestion, 
+                            'explanation': '"it\'s" is short for "it is" or "it has".', 
+                            'sentenceIndex': 0
+                        })
+            # All other contractions
+            elif word_lower in self.CONTRACTION_FIXES:
+                original = text[start:end]
+                correct = self.CONTRACTION_FIXES[word_lower]
+                # Preserve capitalization
+                if original[0].isupper():
+                    correct = correct[0].upper() + correct[1:]
+                errors.append({
+                    'type': 'grammar', 
+                    'position': {'start': start, 'end': end}, 
+                    'original': original, 
+                    'suggestion': correct, 
+                    'explanation': f'Missing apostrophe. Use "{correct}".', 
+                    'sentenceIndex': 0
+                })
+        
         return errors
 
     def _check_verb_tense(self, text: str, words: List[Tuple[str, int, int]], force_past: bool = False) -> List[Dict]:
